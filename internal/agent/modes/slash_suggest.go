@@ -57,6 +57,10 @@ var slashCatalog = []slashCommand{
 type slashSuggester struct {
 	cursor int
 
+	// jailed tracks whether the sandbox is currently locked. It is used
+	// to hide state-dependent commands from the autocomplete popup.
+	jailed bool
+
 	// extra are commands contributed by extensions, refreshed each
 	// frame from the extension manager. Empty when no extensions
 	// have registered any. Sorted by name in SetExtra so map
@@ -80,20 +84,25 @@ func (s *slashSuggester) SetExtra(cmds []slashCommand) {
 	s.extra = sorted
 }
 
+// SetJailed updates the current sandbox state. Called once per render
+// so state-dependent commands can appear/disappear immediately.
+func (s *slashSuggester) SetJailed(jailed bool) { s.jailed = jailed }
+
 // allCatalog returns slashCatalog plus the current extra commands
 // (extension-registered) with a header divider between the two
 // groups. Extra entries are only kept if they don't collide with
 // a built-in name; the built-in always wins.
 func (s *slashSuggester) allCatalog() []slashCommand {
+	base := s.baseCatalog()
 	if len(s.extra) == 0 {
-		return slashCatalog
+		return base
 	}
-	out := make([]slashCommand, 0, len(slashCatalog)+len(s.extra)+1)
-	out = append(out, slashCatalog...)
+	out := make([]slashCommand, 0, len(base)+len(s.extra)+1)
+	out = append(out, base...)
 	var kept []slashCommand
 	for _, c := range s.extra {
 		dup := false
-		for _, b := range slashCatalog {
+		for _, b := range base {
 			if b.Name == c.Name {
 				dup = true
 				break
@@ -106,6 +115,22 @@ func (s *slashSuggester) allCatalog() []slashCommand {
 	if len(kept) > 0 {
 		out = append(out, slashCommand{Header: true, Name: "extensions"})
 		out = append(out, kept...)
+	}
+	return out
+}
+
+// baseCatalog returns the built-in commands visible for the current
+// interactive state.
+func (s *slashSuggester) baseCatalog() []slashCommand {
+	if s.jailed {
+		return slashCatalog
+	}
+	out := make([]slashCommand, 0, len(slashCatalog)-1)
+	for _, c := range slashCatalog {
+		if c.Name == "/unjail" {
+			continue
+		}
+		out = append(out, c)
 	}
 	return out
 }
