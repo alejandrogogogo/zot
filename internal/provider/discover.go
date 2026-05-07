@@ -112,6 +112,100 @@ func DiscoverOpenAI(ctx context.Context, apiKey, baseURL string) ([]Model, error
 	return out, nil
 }
 
+// DiscoverGoogle lists Gemini model ids visible to key on
+// generativelanguage.googleapis.com. The API paginates with
+// nextPageToken; we follow it until exhausted.
+func DiscoverGoogle(ctx context.Context, apiKey, baseURL string) ([]Model, error) {
+	if baseURL == "" {
+		baseURL = geminiDefaultBaseURL
+	}
+	client := &http.Client{Timeout: 15 * time.Second}
+	var out []Model
+	pageToken := ""
+	for {
+		url := strings.TrimRight(baseURL, "/") + "/v1beta/models?pageSize=200"
+		if pageToken != "" {
+			url += "&pageToken=" + pageToken
+		}
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("x-goog-api-key", apiKey)
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("google discover http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		var page struct {
+			Models []struct {
+				Name                       string   `json:"name"` // "models/gemini-2.5-pro"
+				DisplayName                string   `json:"displayName"`
+				SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+				InputTokenLimit            int      `json:"inputTokenLimit"`
+				OutputTokenLimit           int      `json:"outputTokenLimit"`
+			} `json:"models"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("google discover parse: %w", err)
+		}
+		for _, m := range page.Models {
+			// Strip the "models/" prefix Gemini uses on resource names.
+			id := strings.TrimPrefix(m.Name, "models/")
+			if !looksLikeGeminiChatModel(id, m.SupportedGenerationMethods) {
+				continue
+			}
+			display := m.DisplayName
+			if display == "" {
+				display = id
+			}
+			out = append(out, Model{
+				Provider:      "google",
+				ID:            id,
+				DisplayName:   display,
+				ContextWindow: m.InputTokenLimit,
+				MaxOutput:     m.OutputTokenLimit,
+				Source:        "live",
+			})
+		}
+		if page.NextPageToken == "" {
+			break
+		}
+		pageToken = page.NextPageToken
+	}
+	return out, nil
+}
+
+// looksLikeGeminiChatModel filters Gemini's /v1beta/models output
+// down to entries usable with streamGenerateContent. The API also
+// lists embedding models, AQA, and other non-chat artefacts.
+func looksLikeGeminiChatModel(id string, methods []string) bool {
+	if !strings.HasPrefix(id, "gemini-") && !strings.HasPrefix(id, "gemma-") {
+		return false
+	}
+	if strings.Contains(id, "embedding") || strings.Contains(id, "aqa") {
+		return false
+	}
+	if len(methods) > 0 {
+		ok := false
+		for _, m := range methods {
+			if m == "generateContent" || m == "streamGenerateContent" {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // looksLikeChatModel returns true for OpenAI ids that can plausibly be
 // used with the chat/completions endpoint. Errs on the side of inclusion.
 func looksLikeChatModel(id string) bool {

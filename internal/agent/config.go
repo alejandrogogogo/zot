@@ -148,6 +148,16 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 		if v := os.Getenv("MOONSHOT_API_KEY"); v != "" {
 			return v, "apikey", "", nil
 		}
+	case "google":
+		// Both env names are widely-used in the Google ecosystem;
+		// GEMINI_API_KEY is the AI Studio default, GOOGLE_API_KEY
+		// is the older / generic name. Either works.
+		if v := os.Getenv("GEMINI_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+		if v := os.Getenv("GOOGLE_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
 	}
 	c, err := AuthStoreFor().Load()
 	if err != nil {
@@ -184,6 +194,13 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 		if tok := loadKimiCodeCLIToken(); tok != nil && tok.AccessToken != "" {
 			tok, _ = refreshIfExpired("kimi", tok)
 			return tok.AccessToken, "oauth", "", nil
+		}
+	case "google":
+		// Google is API-key only — no OAuth path. We still load
+		// auth.json so /login api-key flows work without exporting
+		// an env var.
+		if c.Google.APIKey != "" {
+			return c.Google.APIKey, "apikey", "", nil
 		}
 	}
 	return "", "", "", fmt.Errorf("no credential for %s", provider)

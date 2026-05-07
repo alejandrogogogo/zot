@@ -28,7 +28,7 @@ const (
 type loginDialog struct {
 	step     loginStep
 	method   string // "apikey" | "oauth"
-	provider string // "anthropic" | "openai" | "kimi"
+	provider string // "anthropic" | "openai" | "kimi" | "google"
 	message  string
 	success  bool
 	url      string
@@ -39,7 +39,7 @@ type loginDialog struct {
 	// provider, captured when Open() runs. Rendered above the
 	// method picker so the user can see whether they're already
 	// logged in (and how) before starting a new flow. Keys:
-	// "anthropic", "openai", "kimi". Value is "apikey", "oauth", or ""
+	// "anthropic", "openai", "kimi", "google". Value is "apikey", "oauth", or ""
 	// (not logged in).
 	status map[string]string
 }
@@ -65,7 +65,7 @@ func (d *loginDialog) Open(zotHome string) {
 	d.success = false
 	d.url = ""
 	d.cursor = 0
-	d.status = map[string]string{"anthropic": "", "openai": "", "kimi": ""}
+	d.status = map[string]string{"anthropic": "", "openai": "", "kimi": "", "google": ""}
 	// Best-effort: if the auth file can't be read, treat every
 	// provider as not-logged-in. The status line just won't show
 	// anything useful in that case, which is fine — the user
@@ -75,6 +75,7 @@ func (d *loginDialog) Open(zotHome string) {
 		d.status["anthropic"] = creds.Method("anthropic")
 		d.status["openai"] = creds.Method("openai")
 		d.status["kimi"] = creds.Method("kimi")
+		d.status["google"] = creds.Method("google")
 	}
 }
 
@@ -111,7 +112,7 @@ func (d *loginDialog) Render(th tui.Theme, width int) []string {
 		}
 		lines = append(lines, frameRule(th, width))
 	case loginStepProvider:
-		opts := []string{"anthropic", "openai", "kimi"}
+		opts := []string{"anthropic", "openai", "kimi", "google"}
 		lines = append(lines, frameHeader(th, "login - "+d.method, width))
 		for _, l := range d.renderStatusLines(th) {
 			lines = append(lines, l)
@@ -204,6 +205,8 @@ func providerLabel(id string) string {
 		return "OpenAI (ChatGPT Plus/Pro)"
 	case "kimi":
 		return "Kimi Code"
+	case "google":
+		return "Google (Gemini API key)"
 	}
 	return id
 }
@@ -222,7 +225,8 @@ func (d *loginDialog) renderStatusLines(th tui.Theme) []string {
 	anth := d.status["anthropic"]
 	op := d.status["openai"]
 	kimi := d.status["kimi"]
-	if anth == "" && op == "" && kimi == "" {
+	goog := d.status["google"]
+	if anth == "" && op == "" && kimi == "" && goog == "" {
 		return nil
 	}
 	row := func(id, method string) string {
@@ -245,6 +249,7 @@ func (d *loginDialog) renderStatusLines(th tui.Theme) []string {
 		row("anthropic", anth),
 		row("openai", op),
 		row("kimi", kimi),
+		row("google", goog),
 		"",
 	}
 }
@@ -310,16 +315,23 @@ func (d *loginDialog) handleProviderKey(k tui.Key) loginDialogAction {
 			d.cursor--
 		}
 	case tui.KeyDown:
-		if d.cursor < 2 {
+		if d.cursor < 3 {
 			d.cursor++
 		}
 	case tui.KeyEsc:
 		d.Close()
 		return loginDialogAction{Close: true}
 	case tui.KeyEnter:
-		providers := []string{"anthropic", "openai", "kimi"}
+		providers := []string{"anthropic", "openai", "kimi", "google"}
 		d.provider = providers[d.cursor]
 		d.step = loginStepWaiting
+		// Google has no subscription OAuth path (Gemini Advanced does
+		// not issue API tokens). If the user chose subscription + google,
+		// quietly downgrade to api-key so they get a usable form instead
+		// of a hard error.
+		if d.provider == "google" {
+			d.method = "apikey"
+		}
 		if d.method == "apikey" {
 			return loginDialogAction{StartAPIKey: true, Provider: d.provider}
 		}

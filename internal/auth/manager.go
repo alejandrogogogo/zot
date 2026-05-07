@@ -78,8 +78,8 @@ func (m *Manager) Close() {
 
 // StartAPIKey launches the API-key login flow.
 func (m *Manager) StartAPIKey(provider string) (string, error) {
-	if provider != "anthropic" && provider != "openai" && provider != "kimi" {
-		return "", fmt.Errorf("provider must be anthropic, openai, or kimi")
+	if !isKnownAPIKeyProvider(provider) {
+		return "", fmt.Errorf("provider must be anthropic, openai, kimi, or google")
 	}
 	if err := m.ensureKeyServer(); err != nil {
 		return "", err
@@ -124,6 +124,11 @@ func (m *Manager) consumeKeyServerResults() {
 // StartOAuth launches the subscription OAuth flow for provider.
 // Only one oauth flow may be in progress at a time (because the
 // callback port is fixed per provider and re-used by the official CLIs).
+//
+// Note: "google" is intentionally not supported here. Google does not
+// offer a subscription OAuth that exchanges a Google One AI / Gemini
+// Advanced login for usable Generative Language API credentials, so
+// the only supported google login path is the API-key flow.
 func (m *Manager) StartOAuth(provider string) (string, error) {
 	if provider == "kimi" {
 		return m.StartKimiDeviceOAuth()
@@ -134,8 +139,10 @@ func (m *Manager) StartOAuth(provider string) (string, error) {
 		op = AnthropicOAuth
 	case "openai":
 		op = OpenAIOAuth
+	case "google":
+		return "", fmt.Errorf("google login is api-key only; use api key login for gemini")
 	default:
-		return "", fmt.Errorf("provider must be anthropic, openai, or kimi")
+		return "", fmt.Errorf("provider must be anthropic, openai, kimi, or google")
 	}
 
 	m.mu.Lock()
@@ -255,8 +262,10 @@ func (m *Manager) StartManualOAuth(provider string) (string, error) {
 		op = AnthropicManualOAuth
 	case "openai":
 		op = OpenAIOAuth
+	case "google":
+		return "", fmt.Errorf("google login is api-key only; use api key login for gemini")
 	default:
-		return "", fmt.Errorf("provider must be anthropic, openai, or kimi")
+		return "", fmt.Errorf("provider must be anthropic, openai, kimi, or google")
 	}
 
 	pkce, err := NewPKCE()

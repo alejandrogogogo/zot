@@ -81,6 +81,11 @@ func refreshModels() {
 			all = append(all, live...)
 		}
 	}
+	if cred, method, err := ResolveCredential("google", ""); err == nil && method == "apikey" {
+		if live, err := provider.DiscoverGoogle(ctx, cred, ""); err == nil {
+			all = append(all, live...)
+		}
+	}
 
 	if len(all) == 0 {
 		return

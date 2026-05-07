@@ -2460,7 +2460,7 @@ func (i *Interactive) openLogoutDialog() {
 	}
 
 	var items []logoutItem
-	for _, p := range []string{"anthropic", "openai", "kimi"} {
+	for _, p := range []string{"anthropic", "openai", "kimi", "google"} {
 		if creds.Has(p) {
 			method := creds.Method(p)
 			if method == "oauth" {
@@ -2513,12 +2513,12 @@ func (i *Interactive) doLogout(target string) {
 	var providers []string
 	switch target {
 	case "", "all":
-		providers = []string{"anthropic", "openai", "kimi"}
-	case "anthropic", "openai", "kimi":
+		providers = []string{"anthropic", "openai", "kimi", "google"}
+	case "anthropic", "openai", "kimi", "google":
 		providers = []string{target}
 	default:
 		i.mu.Lock()
-		i.statusErr = "unknown provider: " + target + " (use anthropic, openai, kimi, or all)"
+		i.statusErr = "unknown provider: " + target + " (use anthropic, openai, kimi, google, or all)"
 		i.mu.Unlock()
 		return
 	}

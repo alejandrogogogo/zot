@@ -292,7 +292,7 @@ func extractFailedProvider(err error) string {
 	if i := strings.Index(msg, ":"); i > 0 {
 		head := strings.TrimSpace(msg[:i])
 		switch head {
-		case "anthropic", "openai", "openai-codex", "kimi", "ollama":
+		case "anthropic", "openai", "openai-codex", "kimi", "google", "ollama":
 			return head
 		}
 	}
