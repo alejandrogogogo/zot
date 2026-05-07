@@ -1001,6 +1001,12 @@ func (i *Interactive) redraw() {
 			text := truncateLine(q, cols-17)
 			queue = append(queue, label+i.cfg.Theme.FG256(i.cfg.Theme.Muted, text))
 		}
+		// Hint row, rendered in the same muted tone as the model
+		// info on the status bar so it reads as ambient metadata
+		// rather than a chip. Tells the user how to recover the
+		// most recent queued message back into the editor.
+		hint := "  Press Option+↑ to slide back into input"
+		queue = append(queue, i.cfg.Theme.FG256(i.cfg.Theme.Muted, hint))
 	}
 
 	// Bottom-sticky sections (always visible, never scroll). Each
@@ -1728,6 +1734,25 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		i.scrollBy(-i.chatPage())
 		return false
 	case tui.KeyUp:
+		// Alt/Option+Up: pop the most recently queued ("sliding in")
+		// message back into the editor so the user can edit and
+		// resend it. Repeated presses keep peeling messages off the
+		// tail of the queue; each press *replaces* the editor
+		// contents (we don't append/push). When the queue is empty
+		// the keypress falls through to the normal scroll behavior.
+		if k.Alt {
+			i.mu.Lock()
+			if n := len(i.queued); n > 0 {
+				text := i.queued[n-1]
+				i.queued = i.queued[:n-1]
+				i.mu.Unlock()
+				i.ed.SetValue(text)
+				i.inputHistoryIndex = -1
+				i.invalidate()
+				return false
+			}
+			i.mu.Unlock()
+		}
 		// Always use up/down for chat scrolling, even when the editor
 		// contains text. This makes keyboard scrolling consistent with
 		// a draft present at the cost of disabling vertical cursor
