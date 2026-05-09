@@ -70,7 +70,10 @@ func (r *Renderer) Resize(cols, rows int) {
 		r.logHardwareRow = 0
 		r.logInit = false
 		if r.out != nil {
-			_, _ = io.WriteString(r.out, SeqClearScreen)
+			// Clear both screen and scrollback so stale content from
+			// the old width doesn't bleed through. Move to (1,1) so
+			// the next DrawLog/writeFull starts from a clean slate.
+			_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreen+SeqClearScrollback+MoveTo(1, 1))
 		}
 	}
 }
@@ -393,6 +396,37 @@ func (r *Renderer) DrawLog(chat, bottom []string, cursorBottomRow, cursorCol int
 			w.WriteString("\x1b[" + itoa(cursorCol) + "C")
 		}
 		w.WriteString(SeqShowCursor)
+	}
+
+	// Selection-highlight workaround: VS Code's terminal (and some
+	// others) don't reliably clear background colors when a row is
+	// overwritten. When the current OR previous bottom block contains
+	// selection-highlight escapes (dialogs with a cursor row), wipe
+	// the cached bottom rows so the diff rewrites every one of them.
+	// This mirrors the hasSelection guard in Draw().
+	if r.logInit && len(r.logLines) > 0 {
+		botHasHL := func(block []string) bool {
+			for _, l := range block {
+				if strings.Contains(l, "\x1b[48;5;") {
+					return true
+				}
+			}
+			return false
+		}
+		if botHasHL(bottomFrame) || botHasHL(r.logBottom) {
+			// Invalidate only the bottom portion of the cached lines
+			// so the chat region (terminal scrollback) is still
+			// diffed cheaply. We do this by replacing the old bottom
+			// rows with empty strings so every bottom row looks
+			// "changed" to the diff below.
+			botStart := len(r.logLines) - len(r.logBottom) - bottomMarginRows
+			if botStart < 0 {
+				botStart = 0
+			}
+			for idx := botStart; idx < len(r.logLines); idx++ {
+				r.logLines[idx] = "\x00" // sentinel that won't match any real line
+			}
+		}
 	}
 
 	full := !r.logInit || len(r.logLines) == 0
