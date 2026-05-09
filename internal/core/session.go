@@ -66,11 +66,12 @@ type SessionMeta struct {
 // the default unmarshaler cannot reconstruct); it is written with a
 // regular provider.Message value.
 type sessionLine struct {
-	Type       string            `json:"type"`
-	Meta       *SessionMeta      `json:"meta,omitempty"`
-	Message    *provider.Message `json:"message,omitempty"`
-	Usage      *provider.Usage   `json:"usage,omitempty"`
-	Cumulative *provider.Usage   `json:"cumulative,omitempty"`
+	Type       string             `json:"type"`
+	Meta       *SessionMeta       `json:"meta,omitempty"`
+	Message    *provider.Message  `json:"message,omitempty"`
+	Messages   []provider.Message `json:"messages,omitempty"`
+	Usage      *provider.Usage    `json:"usage,omitempty"`
+	Cumulative *provider.Usage    `json:"cumulative,omitempty"`
 }
 
 type sessionLineHead struct {
@@ -189,6 +190,10 @@ func OpenSession(path string) (*Session, []provider.Message, error) {
 		case "message":
 			if msg, err := hydrateMessage(line); err == nil && len(msg.Content) > 0 {
 				messages = append(messages, msg)
+			}
+		case "compaction":
+			if compacted, err := hydrateCompaction(line); err == nil {
+				messages = compacted
 			}
 		}
 		return nil
@@ -373,6 +378,13 @@ func describeSession(path string) SessionSummary {
 			if s.FirstUserText == "" {
 				s.FirstUserText = firstUserText(line)
 			}
+		case "compaction":
+			if compacted, err := hydrateCompaction(line); err == nil {
+				s.MessageCount = len(compacted)
+				if s.FirstUserText == "" && len(compacted) > 0 {
+					s.FirstUserText = firstTextFromMessage(compacted[0])
+				}
+			}
 		case "rename":
 			var row struct {
 				Title string `json:"title"`
@@ -411,6 +423,15 @@ func firstUserText(line []byte) string {
 	for _, c := range row.Message.Content {
 		if c.Text != "" {
 			return c.Text
+		}
+	}
+	return ""
+}
+
+func firstTextFromMessage(msg provider.Message) string {
+	for _, c := range msg.Content {
+		if tb, ok := c.(provider.TextBlock); ok && tb.Text != "" {
+			return tb.Text
 		}
 	}
 	return ""
@@ -517,6 +538,21 @@ func (s *Session) AppendMessage(m provider.Message) error {
 	return nil
 }
 
+// AppendCompaction writes a checkpoint that replaces all earlier
+// transcript rows when the session is resumed. The old rows remain in
+// the JSONL file for audit/export, while loaders use the latest
+// compaction row as the effective transcript.
+func (s *Session) AppendCompaction(messages []provider.Message) error {
+	if s == nil {
+		return nil
+	}
+	if err := s.writeLine(sessionLine{Type: "compaction", Messages: messages}); err != nil {
+		return err
+	}
+	s.messagesAppended = len(messages)
+	return nil
+}
+
 // UpdateModel records a provider/model switch in the session file.
 // The reader keeps the most recent meta entry, so the session resumes
 // with the updated model.
@@ -580,19 +616,45 @@ func (s *Session) writeLine(row sessionLine) error {
 // We persist messages by reading the raw "message" object back and
 // rebuilding Content from discriminated fields.
 
+func hydrateCompaction(lineBytes []byte) ([]provider.Message, error) {
+	var row struct {
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(lineBytes, &row); err != nil {
+		return nil, err
+	}
+	messages := make([]provider.Message, 0, len(row.Messages))
+	for _, raw := range row.Messages {
+		msg, err := hydrateMessageObject(raw)
+		if err == nil && len(msg.Content) > 0 {
+			messages = append(messages, msg)
+		}
+	}
+	return messages, nil
+}
+
 func hydrateMessage(lineBytes []byte) (provider.Message, error) {
 	var row struct {
-		Message struct {
-			Role    provider.Role     `json:"role"`
-			Content []json.RawMessage `json:"content"`
-			Time    time.Time         `json:"time"`
-		} `json:"message"`
+		Message json.RawMessage `json:"message"`
 	}
 	if err := json.Unmarshal(lineBytes, &row); err != nil {
 		return provider.Message{}, err
 	}
-	msg := provider.Message{Role: row.Message.Role, Time: row.Message.Time}
-	for _, raw := range row.Message.Content {
+	return hydrateMessageObject(row.Message)
+}
+
+func hydrateMessageObject(rawMessage []byte) (provider.Message, error) {
+	var row struct {
+		Role    provider.Role     `json:"role"`
+		Content []json.RawMessage `json:"content"`
+		Time    time.Time         `json:"time"`
+		Meta    map[string]string `json:"meta,omitempty"`
+	}
+	if err := json.Unmarshal(rawMessage, &row); err != nil {
+		return provider.Message{}, err
+	}
+	msg := provider.Message{Role: row.Role, Time: row.Time, Meta: row.Meta}
+	for _, raw := range row.Content {
 		var head struct {
 			Text        string `json:"text"`
 			MimeType    string `json:"mime_type"`
