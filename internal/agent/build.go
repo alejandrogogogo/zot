@@ -278,6 +278,9 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 	summaries := toolSummaries(reg, args)
 
 	append_ := append([]string(nil), args.AppendSystemPrompt...)
+	if agentsAddendum := readAgentsContext(args.CWD, ZotHome()); agentsAddendum != "" {
+		append_ = append(append_, agentsAddendum)
+	}
 	if skillAddendum != "" {
 		append_ = append(append_, skillAddendum)
 	}
@@ -338,6 +341,83 @@ func readUserSystemPrompt(zotHome string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(raw))
+}
+
+// readAgentsContext loads optional AGENTS.md instruction files. No
+// default file is created or required: zot only includes files that
+// already exist. Global instructions ($ZOT_HOME/AGENTS.md) come first,
+// followed by project instructions from the top-most parent down to cwd.
+func readAgentsContext(cwd, zotHome string) string {
+	type contextFile struct {
+		path    string
+		content string
+	}
+	var files []contextFile
+	seen := map[string]bool{}
+	add := func(path string) {
+		if path == "" {
+			return
+		}
+		abs, err := filepath.Abs(path)
+		if err == nil {
+			path = abs
+		}
+		if seen[path] {
+			return
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return
+		}
+		content := strings.TrimSpace(string(raw))
+		if content == "" {
+			return
+		}
+		seen[path] = true
+		files = append(files, contextFile{path: path, content: content})
+	}
+	addFirstFromDir := func(dir string) {
+		if dir == "" {
+			return
+		}
+		for _, name := range []string{"AGENTS.md", "AGENTS.MD"} {
+			path := filepath.Join(dir, name)
+			if _, err := os.Stat(path); err == nil {
+				add(path)
+				return
+			}
+		}
+	}
+
+	addFirstFromDir(zotHome)
+
+	if cwd != "" {
+		abs, err := filepath.Abs(cwd)
+		if err == nil {
+			cwd = abs
+		}
+		var dirs []string
+		for dir := filepath.Clean(cwd); ; dir = filepath.Dir(dir) {
+			dirs = append(dirs, dir)
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+		}
+		for i := len(dirs) - 1; i >= 0; i-- {
+			addFirstFromDir(dirs[i])
+		}
+	}
+
+	if len(files) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("Project context instructions loaded from AGENTS.md files. Follow them when working in this repository. Later files are more specific and may override earlier ones.\n")
+	for _, f := range files {
+		fmt.Fprintf(&sb, "\n## %s\n\n%s\n", f.path, f.content)
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 // descMapFromSummaries indexes the human-readable descriptions for
