@@ -240,8 +240,9 @@ type Interactive struct {
 	// window down through the buffer (because scrollOffset is measured
 	// from the bottom) and the user's reading position drifts upward
 	// and off the top.
-	prevChatLen  int
-	prevChatCols int
+	prevChatLen     int
+	prevChatCols    int
+	prevOverlayOpen bool
 
 	// chatCache stores the built transcript/status-note rows for idle
 	// frames. Editor typing changes only the bottom input region, so
@@ -938,6 +939,17 @@ func (i *Interactive) redraw() {
 	} else if len(dialog) == 0 && i.fileSuggest.Active(currentInput) {
 		suggest = i.fileSuggest.Render(currentInput, i.cfg.Theme, cols)
 	}
+
+	// Detect overlay close (any dialog or slash/file suggestion popup
+	// just transitioned from open to closed). Force a full redraw so
+	// the rows the overlay occupied are guaranteed to be repainted
+	// from the chat below, instead of the diff path leaving stale
+	// dialog content behind. Equivalent to the user pressing ctrl+l.
+	overlayOpen := len(dialog) > 0 || len(suggest) > 0
+	if i.prevOverlayOpen && !overlayOpen && i.rend != nil {
+		i.rend.Clear()
+	}
+	i.prevOverlayOpen = overlayOpen
 	if len(suggest) > 0 {
 		// One blank row above the popup so it doesn't sit flush
 		// against the chat / welcome content above.
@@ -3114,6 +3126,13 @@ func (i *Interactive) startTurn(parent context.Context, prompt string) {
 func (i *Interactive) startTurnWithImages(parent context.Context, prompt string, images []provider.ImageBlock) {
 	if i.agent == nil {
 		return
+	}
+	// Force a full repaint when a new turn begins so any stray dialog,
+	// popup, or stale tool-progress rows don't leak into the visible
+	// chat area before the assistant starts streaming. Equivalent to
+	// the user pressing ctrl+l right before submit.
+	if i.rend != nil {
+		i.rend.Clear()
 	}
 	// Pre-turn safety: if the most recent context measurement is
 	// already past the auto-compact threshold, condense before
