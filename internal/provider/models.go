@@ -92,6 +92,24 @@ var Catalog = []Model{
 		PriceInput: 15.00, PriceOutput: 75.00, PriceCacheRead: 1.50, PriceCacheWrite: 18.75,
 	},
 
+	// ---- DeepSeek ----
+	// The current public DeepSeek API exposes the V4 family on
+	// api.deepseek.com/v1. Pro is the flagship reasoning model;
+	// Flash is the cheaper/faster sibling. Both accept image inputs
+	// (multimodal parts: image_url) in addition to text.
+	{
+		Provider: "deepseek", ID: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro",
+		ContextWindow: 128000, MaxOutput: 8192, Reasoning: true,
+		PriceInput: 0.55, PriceOutput: 2.19, PriceCacheRead: 0.14,
+		BaseURL: "https://api.deepseek.com/v1",
+	},
+	{
+		Provider: "deepseek", ID: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash",
+		ContextWindow: 128000, MaxOutput: 8192, Reasoning: false,
+		PriceInput: 0.27, PriceOutput: 1.10, PriceCacheRead: 0.07,
+		BaseURL: "https://api.deepseek.com/v1",
+	},
+
 	// ---- Kimi / Kimi Code ----
 	{
 		Provider: "kimi", ID: "kimi-for-coding", DisplayName: "Kimi-k2.6",

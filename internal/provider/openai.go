@@ -56,6 +56,20 @@ func NewKimi(apiKey, baseURL string) Client {
 	return NewKimiWithHeaders(apiKey, baseURL, nil)
 }
 
+// NewDeepSeek creates a DeepSeek client. DeepSeek's chat API is
+// OpenAI-compatible at https://api.deepseek.com/v1.
+func NewDeepSeek(apiKey, baseURL string) Client {
+	if baseURL == "" {
+		baseURL = "https://api.deepseek.com/v1"
+	}
+	return &openaiClient{
+		apiKey:  apiKey,
+		baseURL: strings.TrimRight(baseURL, "/"),
+		name:    "deepseek",
+		http:    &http.Client{Timeout: 0},
+	}
+}
+
 // NewKimiWithHeaders creates a Kimi/Moonshot client with extra headers.
 // Subscription tokens from Kimi Code need the official CLI's X-Msh-* headers.
 func NewKimiWithHeaders(apiKey, baseURL string, headers map[string]string) Client {
@@ -182,11 +196,17 @@ func (c *openaiClient) buildRequest(req Request) (*oaiRequest, error) {
 		out.Messages = append(out.Messages, oaiMessage{Role: "system", Content: req.System})
 	}
 
+	// DeepSeek's chat-completions API rejects the multimodal content
+	// schema (parts arrays containing image_url). Force every user/tool
+	// message to a plain string and silently drop image blocks for
+	// this provider so historical sessions with screenshots still replay.
+	textOnly := c.name == "deepseek"
+
 	req.Messages = RepairOrphanedToolResults(req.Messages)
 	for _, msg := range req.Messages {
 		switch msg.Role {
 		case RoleUser:
-			content := buildOAIUserContent(msg.Content)
+			content := buildOAIUserContent(msg.Content, textOnly)
 			out.Messages = append(out.Messages, oaiMessage{Role: "user", Content: content})
 		case RoleAssistant:
 			am := oaiMessage{Role: "assistant"}
@@ -245,7 +265,7 @@ func (c *openaiClient) buildRequest(req Request) (*oaiRequest, error) {
 			// flattening the tool output to plain text.
 			for _, b := range msg.Content {
 				if tr, ok := b.(ToolResultBlock); ok {
-					content := buildOAIToolContent(tr.Content, tr.IsError)
+					content := buildOAIToolContent(tr.Content, tr.IsError, textOnly)
 					out.Messages = append(out.Messages, oaiMessage{
 						Role:       "tool",
 						ToolCallID: tr.CallID,
@@ -271,7 +291,7 @@ func (c *openaiClient) buildRequest(req Request) (*oaiRequest, error) {
 	return out, nil
 }
 
-func buildOAIUserContent(blocks []Content) interface{} {
+func buildOAIUserContent(blocks []Content, textOnly bool) interface{} {
 	hasImage := false
 	for _, b := range blocks {
 		if _, ok := b.(ImageBlock); ok {
@@ -279,7 +299,7 @@ func buildOAIUserContent(blocks []Content) interface{} {
 			break
 		}
 	}
-	if !hasImage {
+	if textOnly || !hasImage {
 		var sb strings.Builder
 		for _, b := range blocks {
 			if tb, ok := b.(TextBlock); ok {
@@ -294,7 +314,7 @@ func buildOAIUserContent(blocks []Content) interface{} {
 	return buildOAIContentBlocks(blocks, false)
 }
 
-func buildOAIToolContent(blocks []Content, isError bool) interface{} {
+func buildOAIToolContent(blocks []Content, isError, textOnly bool) interface{} {
 	hasImage := false
 	for _, b := range blocks {
 		if _, ok := b.(ImageBlock); ok {
@@ -302,7 +322,7 @@ func buildOAIToolContent(blocks []Content, isError bool) interface{} {
 			break
 		}
 	}
-	if !hasImage {
+	if textOnly || !hasImage {
 		var sb strings.Builder
 		for _, b := range blocks {
 			if tb, ok := b.(TextBlock); ok {

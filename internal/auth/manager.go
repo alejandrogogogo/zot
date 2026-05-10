@@ -79,7 +79,7 @@ func (m *Manager) Close() {
 // StartAPIKey launches the API-key login flow.
 func (m *Manager) StartAPIKey(provider string) (string, error) {
 	if !isKnownAPIKeyProvider(provider) {
-		return "", fmt.Errorf("provider must be anthropic, openai, kimi, or google")
+		return "", fmt.Errorf("provider must be anthropic, openai, kimi, deepseek, or google")
 	}
 	if err := m.ensureKeyServer(); err != nil {
 		return "", err
@@ -141,8 +141,10 @@ func (m *Manager) StartOAuth(provider string) (string, error) {
 		op = OpenAIOAuth
 	case "google":
 		return "", fmt.Errorf("google login is api-key only; use api key login for gemini")
+	case "deepseek":
+		return "", fmt.Errorf("deepseek login is api-key only; use api key login")
 	default:
-		return "", fmt.Errorf("provider must be anthropic, openai, kimi, or google")
+		return "", fmt.Errorf("provider must be anthropic, openai, kimi, deepseek, or google")
 	}
 
 	m.mu.Lock()
@@ -264,8 +266,10 @@ func (m *Manager) StartManualOAuth(provider string) (string, error) {
 		op = OpenAIOAuth
 	case "google":
 		return "", fmt.Errorf("google login is api-key only; use api key login for gemini")
+	case "deepseek":
+		return "", fmt.Errorf("deepseek login is api-key only; use api key login")
 	default:
-		return "", fmt.Errorf("provider must be anthropic, openai, kimi, or google")
+		return "", fmt.Errorf("provider must be anthropic, openai, kimi, deepseek, or google")
 	}
 
 	pkce, err := NewPKCE()

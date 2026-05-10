@@ -101,7 +101,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // elsewhere (manager.StartOAuth).
 func isKnownAPIKeyProvider(p string) bool {
 	switch p {
-	case "anthropic", "openai", "kimi", "google":
+	case "anthropic", "openai", "kimi", "google", "deepseek":
 		return true
 	}
 	return false
@@ -124,7 +124,7 @@ func (s *Server) handleAPIKey(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		provider := r.URL.Query().Get("provider")
 		if !isKnownAPIKeyProvider(provider) {
-			http.Error(w, "provider must be anthropic, openai, kimi, or google", http.StatusBadRequest)
+			http.Error(w, "provider must be anthropic, openai, kimi, deepseek, or google", http.StatusBadRequest)
 			return
 		}
 		tpl.ExecuteTemplate(w, "apikey", map[string]any{"Provider": provider})
@@ -235,11 +235,12 @@ var tpl = template.Must(template.New("index").Parse(`<!doctype html><html lang="
 ` + logoTag + `
 <h1><span class="zot">zot</span> login</h1>
 <hr class="rule">
-<p>paste an api key for anthropic, openai, kimi, or google. <span class="zot">zot</span> probes the provider once, then saves the key to <span class="mono">~/Library/Application Support/zot/auth.json</span>.</p>
+<p>paste an api key for anthropic, openai, kimi, deepseek, or google. <span class="zot">zot</span> probes the provider once, then saves the key to <span class="mono">~/Library/Application Support/zot/auth.json</span>.</p>
 <p>
   <a href="/apikey?provider=anthropic">anthropic api key →</a><br>
   <a href="/apikey?provider=openai">openai api key →</a><br>
   <a href="/apikey?provider=kimi">kimi api key →</a><br>
+  <a href="/apikey?provider=deepseek">deepseek api key →</a><br>
   <a href="/apikey?provider=google">google gemini api key →</a>
 </p>
 <hr class="rule">

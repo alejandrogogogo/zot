@@ -158,6 +158,10 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 		if v := os.Getenv("GOOGLE_API_KEY"); v != "" {
 			return v, "apikey", "", nil
 		}
+	case "deepseek":
+		if v := os.Getenv("DEEPSEEK_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
 	}
 	c, err := AuthStoreFor().Load()
 	if err != nil {
@@ -194,6 +198,10 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 		if tok := loadKimiCodeCLIToken(); tok != nil && tok.AccessToken != "" {
 			tok, _ = refreshIfExpired("kimi", tok)
 			return tok.AccessToken, "oauth", "", nil
+		}
+	case "deepseek":
+		if c.DeepSeek.APIKey != "" {
+			return c.DeepSeek.APIKey, "apikey", "", nil
 		}
 	case "google":
 		// Google is API-key only — no OAuth path. We still load
