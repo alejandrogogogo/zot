@@ -727,21 +727,13 @@ func (i *Interactive) buildChatLocked(cols int) []string {
 		}
 	}
 	i.view.Err = i.statusErr
-	i.liveBlock = i.view.BuildLive(cols)
-
-	streamingActive := i.view.StreamingActive
-	streaming := i.view.Streaming
-	toolCalls := i.view.ToolCalls
-	errLine := i.view.Err
-	i.view.StreamingActive = false
-	i.view.Streaming = ""
-	i.view.ToolCalls = nil
-	i.view.Err = ""
+	// Live streaming/tool rows are appended to the chat buffer (not
+	// hoisted into a separate live block above the editor). That keeps
+	// the renderer's diff view append-only: when a tool finishes the
+	// rows update in place at the end of the buffer, instead of the
+	// whole bottom band shrinking and shifting chat lines around.
+	i.liveBlock = nil
 	chat := i.view.Build(cols)
-	i.view.StreamingActive = streamingActive
-	i.view.Streaming = streaming
-	i.view.ToolCalls = toolCalls
-	i.view.Err = errLine
 
 	// Welcome banner: shown at the top of the chat area when there is
 	// no transcript yet. Disappears after the first message is sent.
@@ -1015,15 +1007,7 @@ func (i *Interactive) redraw() {
 	// content. The status block and editor get their own dedicated
 	// blanks so spacing stays consistent whether or not a dialog or
 	// popup is showing.
-	bottom := make([]string, 0, len(i.liveBlock)+len(dialog)+len(suggest)+len(queue)+len(edLines)+9)
-	if len(i.liveBlock) > 0 {
-		// Live streaming/tool rows are rendered outside the immutable
-		// transcript so native scrollback stays stable while the agent
-		// works. Add the same breathing row the finalized transcript path
-		// gets between adjacent messages.
-		bottom = append(bottom, "")
-		bottom = append(bottom, i.liveBlock...)
-	}
+	bottom := make([]string, 0, len(dialog)+len(suggest)+len(queue)+len(edLines)+9)
 	if len(dialog) > 0 {
 		bottom = append(bottom, "")
 	}
@@ -1151,29 +1135,23 @@ func (i *Interactive) redraw() {
 	// statusLines and edLines (input breathing room). Without
 	// these the rendered cursor would land on a blank instead of
 	// inside the editor row.
-	liveRows := len(i.liveBlock)
-	if liveRows > 0 {
-		// Account for the leading separator row inserted before live
-		// streaming/tool content in the bottom block.
-		liveRows++
-	}
-	cursorRow := liveRows + dialogLead + len(dialog) + len(suggest) + len(queue) + 1 + len(statusLines) + 1 + curR
+	cursorRow := dialogLead + len(dialog) + len(suggest) + len(queue) + 1 + len(statusLines) + 1 + curR
 	cursorCol := curC
 	if i.btwDialog.Active() {
 		if r, c := i.btwDialog.CursorPos(cols); r >= 0 {
-			cursorRow = liveRows + dialogLead + r
+			cursorRow = dialogLead + r
 			cursorCol = c
 		}
 	}
 	if i.dialog.Active() {
 		if r, c := i.dialog.CursorPos(cols); r >= 0 {
-			cursorRow = liveRows + dialogLead + r
+			cursorRow = dialogLead + r
 			cursorCol = c
 		}
 	}
 	if i.sessionDialog.Active() {
 		if r, c := i.sessionDialog.CursorPos(); r >= 0 {
-			cursorRow = liveRows + dialogLead + r
+			cursorRow = dialogLead + r
 			cursorCol = c
 		}
 	}
@@ -3437,10 +3415,6 @@ func (i *Interactive) handleEvent(ev core.AgentEvent) {
 			return
 		}
 		i.resetStreamingStateLocked()
-		// Force full repaint: assistant text committed, layout shifts.
-		if i.rend != nil {
-			i.rend.Invalidate()
-		}
 	case core.EvToolUseStart:
 		// Live streaming: pre-create the view so the user sees the
 		// tool call being composed in real time. Any subsequent
@@ -3500,12 +3474,6 @@ func (i *Interactive) handleEvent(ev core.AgentEvent) {
 			}
 			tc.Result = text.String()
 		}
-		// Force full repaint: tool completion shifts the layout
-		// (collapsed body replaces streaming) and the diff renderer
-		// may leave stale code fragments on status bar rows.
-		if i.rend != nil {
-			i.rend.Invalidate()
-		}
 		if i.cfg.OnToolResult != nil {
 			i.cfg.OnToolResult(e.ID, e.Result)
 		}
@@ -3515,12 +3483,6 @@ func (i *Interactive) handleEvent(ev core.AgentEvent) {
 			i.lastCtxInput = e.Usage.InputTokens + e.Usage.CacheReadTokens + e.Usage.CacheWriteTokens
 		}
 	case core.EvTurnEnd:
-		// Force full repaint: the turn ending shifts layout (streaming
-		// buffer flushed, status bar updates) and the diff renderer
-		// may leave stale content on reused rows.
-		if i.rend != nil {
-			i.rend.Invalidate()
-		}
 		if e.Stop == provider.StopAborted {
 			i.resetStreamingStateLocked()
 			i.statusErr = ""

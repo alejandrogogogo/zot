@@ -58,6 +58,12 @@ func NewRenderer(out io.Writer) *Renderer {
 // starts from a blank slate. Without the clear, characters from the
 // old (wider) layout linger past the new right edge and rows from
 // before the new bottom hang around as garbage.
+func (r *Renderer) ResetScrollRegion() {
+	if r.out != nil {
+		_, _ = io.WriteString(r.out, SeqResetScrollRegion)
+	}
+}
+
 func (r *Renderer) Resize(cols, rows int) {
 	if cols != r.cols || rows != r.rows {
 		r.cols = cols
@@ -398,36 +404,11 @@ func (r *Renderer) DrawLog(chat, bottom []string, cursorBottomRow, cursorCol int
 		w.WriteString(SeqShowCursor)
 	}
 
-	// Selection-highlight workaround: VS Code's terminal (and some
-	// others) don't reliably clear background colors when a row is
-	// overwritten. When the current OR previous bottom block contains
-	// selection-highlight escapes (dialogs with a cursor row), wipe
-	// the cached bottom rows so the diff rewrites every one of them.
-	// This mirrors the hasSelection guard in Draw().
-	if r.logInit && len(r.logLines) > 0 {
-		botHasHL := func(block []string) bool {
-			for _, l := range block {
-				if strings.Contains(l, "\x1b[48;5;") {
-					return true
-				}
-			}
-			return false
-		}
-		if botHasHL(bottomFrame) || botHasHL(r.logBottom) {
-			// Invalidate only the bottom portion of the cached lines
-			// so the chat region (terminal scrollback) is still
-			// diffed cheaply. We do this by replacing the old bottom
-			// rows with empty strings so every bottom row looks
-			// "changed" to the diff below.
-			botStart := len(r.logLines) - len(r.logBottom) - bottomMarginRows
-			if botStart < 0 {
-				botStart = 0
-			}
-			for idx := botStart; idx < len(r.logLines); idx++ {
-				r.logLines[idx] = "\x00" // sentinel that won't match any real line
-			}
-		}
-	}
+	// Selection-highlight workaround removed: it could mis-invalidate
+	// user-bubble padding rows whose colored bg made botHasHL trip,
+	// causing the next diff pass to leave those rows visually thinned
+	// because the cached entry was the \x00 sentinel rather than the
+	// real previous bg-colored row.
 
 	full := !r.logInit || len(r.logLines) == 0
 	if full {
@@ -456,14 +437,26 @@ func (r *Renderer) DrawLog(chat, bottom []string, cursorBottomRow, cursorCol int
 				lastChanged = idx
 			}
 		}
+		// Buffer grew but the appended rows were empty (or otherwise
+		// equal to the implicit "" past the old end). The diff above
+		// won't flag those rows, yet the renderer still needs to
+		// advance its hardware cursor / viewport tracking past them so
+		// the next render starts from the correct position. Treat the
+		// extension as changed.
+		if len(lines) > len(r.logLines) {
+			if firstChanged == -1 {
+				firstChanged = len(r.logLines)
+			}
+			if lastChanged < len(lines)-1 {
+				lastChanged = len(lines) - 1
+			}
+		}
 
 		if firstChanged == -1 {
 			// No content changes; the final cursor positioning below may still
 			// move the hardware cursor if the editor cursor changed.
-		} else if len(lines) < len(r.logLines) || firstChanged < r.logViewportTop {
-			// Shrinks and changes above the visible viewport cannot be safely
-			// patched in terminal scrollback. Replay the current logical buffer
-			// instead of risking stale duplicated rows.
+		} else if firstChanged < r.logViewportTop {
+			// Changes above the visible viewport cannot be patched safely.
 			writeFull(true)
 		} else {
 			prevViewportTop := r.logViewportTop
@@ -523,7 +516,26 @@ func (r *Renderer) DrawLog(chat, bottom []string, cursorBottomRow, cursorCol int
 				w.WriteString(SeqClearLine)
 				w.WriteString(lines[idx])
 			}
-			r.logHardwareRow = renderEnd
+			finalRow := renderEnd
+			if len(r.logLines) > len(lines) {
+				extra := len(r.logLines) - len(lines)
+				if extra > r.rows {
+					writeFull(true)
+				} else {
+					for e := 0; e < extra; e++ {
+						w.WriteString("\x1b[1B")
+						w.WriteString("\r")
+						w.WriteString("\x1b[0m")
+						w.WriteString(SeqClearLine)
+						finalRow++
+					}
+					if extra > 0 {
+						w.WriteString("\x1b[" + itoa(extra) + "A")
+						finalRow -= extra
+					}
+				}
+			}
+			r.logHardwareRow = finalRow
 			r.logViewportTop = viewportTop
 			if minTop := r.logHardwareRow - r.rows + 1; minTop > r.logViewportTop {
 				r.logViewportTop = minTop
@@ -534,17 +546,6 @@ func (r *Renderer) DrawLog(chat, bottom []string, cursorBottomRow, cursorCol int
 		}
 	}
 
-	// Re-anchor the terminal viewport at the true end of the logical
-	// buffer on every frame. During busy turns most redraws only mutate
-	// spinner/live rows above the editor; without touching the final margin
-	// row, the terminal can visually lose the bottom padding even though it
-	// still exists in r.logLines.
-	if len(lines) > 0 {
-		moveToLogicalRow(len(lines) - 1)
-		w.WriteString("\r")
-		w.WriteString("\x1b[0m")
-		w.WriteString(SeqClearLine)
-	}
 	positionCursor()
 	w.WriteString(SeqSynchronizedOff)
 	_, _ = io.WriteString(r.out, w.String())
