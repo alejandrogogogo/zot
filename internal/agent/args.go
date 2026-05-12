@@ -323,6 +323,10 @@ func PrintHelp(version string) {
 		row{"zot --ext ./path/to/ext", "load an extension for this run only"},
 		row{"zot ext help", "show all extension subcommands"},
 	)
+	section("self-update",
+		row{"zot update", "download and install the latest release"},
+		row{"zot update --check", "show whether a new release is available"},
+	)
 	section("telegram",
 		row{"zot telegram-bot setup", "configure a telegram bot (from BotFather)"},
 		row{"zot telegram-bot run", "foreground bridge (ctrl+c to stop)"},
