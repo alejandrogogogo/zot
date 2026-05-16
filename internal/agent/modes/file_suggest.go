@@ -274,8 +274,13 @@ func (s *fileSuggester) Render(input string, th tui.Theme, width int) []string {
 	return out
 }
 
-// fileChipRE matches [file:N:name] and [dir:N:name/] chips.
-var fileChipRE = regexp.MustCompile(`\[(file|dir):(\d+):[^\]]+\]`)
+// fileChipRE matches @-picker chips inserted by modes:
+// [file:relative/path] and [dir:relative/path/]. The lower-level
+// tui.Editor has its own drag/drop chips ([file:N:basename]) which
+// Editor.SubmitValue expands before callers reach this helper; if one
+// leaks through, leave it untouched rather than guessing at a path.
+var fileChipRE = regexp.MustCompile(`\[(file|dir):([^\]]+)\]`)
+var editorFileChipRE = regexp.MustCompile(`^\d+:`)
 
 // expandFileChips replaces [file:name] and [dir:name/] chips with
 // the full path relative to cwd.
@@ -286,6 +291,9 @@ func expandFileChips(text, cwd string) string {
 			return match
 		}
 		name := groups[2]
+		if editorFileChipRE.MatchString(name) {
+			return match
+		}
 		// Strip trailing slash from dir names.
 		name = strings.TrimRight(name, "/")
 		return filepath.Join(cwd, name)

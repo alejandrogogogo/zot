@@ -17,6 +17,13 @@ const (
 	ModePrint       Mode = "print"
 	ModeJSON        Mode = "json"
 	ModeRPC         Mode = "rpc"
+	// ModeSwarmAgent is the long-lived, headless daemon mode used by
+	// swarm-spawned agents. The binary opens a unix-socket inbox at
+	// the path provided by --swarm-agent, reads supervisor messages
+	// off it ("user ...", "cancel", "shutdown"), runs each user turn
+	// against a persistent session, and streams JSONL events on
+	// stdout. See internal/swarm/inbox.go for the wire protocol.
+	ModeSwarmAgent Mode = "swarm-agent"
 )
 
 // Args holds parsed command-line options.
@@ -85,6 +92,11 @@ type Args struct {
 	Version    bool
 
 	Prompt string // concatenated positional args
+
+	// SwarmAgent is the inbox-socket path when this process is a
+	// swarm-spawned agent. Empty in every other mode. Set by
+	// --swarm-agent <path>; presence flips Mode to ModeSwarmAgent.
+	SwarmAgent string
 }
 
 // ParseArgs parses the process arguments (excluding argv[0]).
@@ -202,6 +214,13 @@ func ParseArgs(in []string) (Args, error) {
 				return a, err
 			}
 			a.CWD = v
+		case "--swarm-agent":
+			v, err := want(&i, arg)
+			if err != nil {
+				return a, err
+			}
+			a.SwarmAgent = v
+			a.Mode = ModeSwarmAgent
 		case "--tools":
 			v, err := want(&i, arg)
 			if err != nil {

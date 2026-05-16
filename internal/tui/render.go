@@ -382,6 +382,20 @@ func (r *Renderer) DrawLog(chat, bottom []string, cursorBottomRow, cursorCol int
 		cursorTargetRow = len(chatFrame) + cursorBottomRow
 	}
 
+	// Idle no-op fast path. When the buffer AND the cursor position
+	// haven't changed since the last DrawLog, emit nothing. The
+	// alternative — always writing SeqHideCursor + cursor-position +
+	// SeqShowCursor — resets the terminal's cursor blink timer on
+	// every tick. At our 120ms animation cadence that means the
+	// caret in an idle dialog editor (e.g. an open swarm transcript
+	// for an agent that's currently idle) appears as a solid block
+	// that never blinks, because we keep "showing" it before the
+	// terminal can blink it off. Bailing out here lets the OS run
+	// its blink cycle.
+	if r.logInit && cursorBottomRow == r.cursorRow && cursorCol == r.cursorCol && sameLines(lines, r.logLines) {
+		return
+	}
+
 	var w strings.Builder
 	w.WriteString(SeqSynchronizedOn)
 	w.WriteString(SeqHideCursor)
@@ -610,6 +624,22 @@ func (r *Renderer) DrawLog(chat, bottom []string, cursorBottomRow, cursorCol int
 	r.logLines = append(r.logLines[:0], lines...)
 	r.cursorRow = cursorBottomRow
 	r.cursorCol = cursorCol
+}
+
+// sameLines reports whether two []string have the exact same
+// length and per-row contents. Used by DrawLog's idle no-op fast
+// path; cheap enough at our frame rates and far simpler than
+// hashing every byte.
+func sameLines(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func writeBlock(w *strings.Builder, lines []string) {

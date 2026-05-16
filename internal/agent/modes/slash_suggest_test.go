@@ -21,6 +21,13 @@ func TestSlashSuggesterHidesUnjailUntilJailed(t *testing.T) {
 	}
 }
 
+func TestSlashSuggesterHasSwarm(t *testing.T) {
+	s := newSlashSuggester()
+	if got := commandNames(s.matches("/sw")); !contains(got, "/swarm") {
+		t.Fatalf("/swarm missing from suggestions, got %v", got)
+	}
+}
+
 func commandNames(cmds []slashCommand) []string {
 	out := make([]string, 0, len(cmds))
 	for _, c := range cmds {

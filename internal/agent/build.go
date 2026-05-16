@@ -118,6 +118,31 @@ func toolSummariesFromRegistry(reg core.Registry, cached map[string]string) []To
 	return out
 }
 
+// defaultModelForProvider returns the model id zot prefers when the
+// caller didn't pick one. Mirrors the per-provider switch used at
+// multiple points in Resolve; centralised so the unknown-model
+// recovery path and the no-model-configured path can't drift.
+//
+// Returns the empty string for "ollama", which has no built-in
+// default — the caller is expected to special-case ollama and
+// error or use whatever the user passed.
+func defaultModelForProvider(prov string) string {
+	switch prov {
+	case "openai":
+		return "gpt-5"
+	case "kimi":
+		return "kimi-for-coding"
+	case "deepseek":
+		return "deepseek-v4-pro"
+	case "google":
+		return "gemini-2.5-pro"
+	case "ollama":
+		return ""
+	default:
+		return provider.DefaultModel.ID
+	}
+}
+
 // Resolve merges args, config, and env into a Resolved set.
 //
 // Unlike the earlier version, Resolve NEVER returns an error for
@@ -221,10 +246,10 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 		}
 	}
 	resolvedModel, err := provider.FindModel(provName, model)
-	if err != nil && provName != "ollama" {
-		return Resolved{}, err
-	}
 	if err != nil && provName == "ollama" {
+		// ollama is intentionally open-catalogue: any model id the
+		// local server understands is valid, even if not in the
+		// baked-in catalog.
 		resolvedModel = provider.Model{
 			Provider:      "ollama",
 			ID:            model,
@@ -234,6 +259,41 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 			BaseURL:       args.BaseURL,
 			Source:        "ollama",
 		}
+		err = nil
+	}
+	if err != nil {
+		// The model the user (or persisted config) asked for is no
+		// longer in the active catalogue — they probably removed it
+		// from their models.json or upgraded zot and the id changed.
+		// Refusing to launch is the wrong move: it strands the user
+		// with no way to even open the TUI and pick a new model.
+		// Fall back to the provider's default, warn on stderr, and,
+		// when the stale id came from the persisted config (not an
+		// explicit --model flag), repair the config so the warning
+		// doesn't repeat on every launch.
+		fallback := defaultModelForProvider(provName)
+		fm, ferr := provider.FindModel(provName, fallback)
+		if ferr != nil {
+			// Even the provider default is gone (catastrophic
+			// catalogue trim). Last resort: any model on this
+			// provider, then the global DefaultModel.
+			if candidates := provider.ModelsForProvider(provName); len(candidates) > 0 {
+				fm = candidates[0]
+				ferr = nil
+			} else {
+				fm = provider.DefaultModel
+				ferr = nil
+			}
+		}
+		fmt.Fprintf(os.Stderr,
+			"zot: model %q is not in the active catalogue; using %q instead. Pick a different model with --model or /model.\n",
+			model, fm.ID)
+		if args.Model == "" && cfg.Model == model {
+			cfg.Model = fm.ID
+			_ = SaveConfig(cfg)
+		}
+		resolvedModel = fm
+		model = fm.ID
 	}
 
 	// If the model defines a base URL (e.g. local ollama) and the

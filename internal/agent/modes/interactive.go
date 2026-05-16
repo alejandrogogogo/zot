@@ -17,6 +17,7 @@ import (
 	"github.com/patriceckhart/zot/internal/extproto"
 	"github.com/patriceckhart/zot/internal/provider"
 	"github.com/patriceckhart/zot/internal/skills"
+	"github.com/patriceckhart/zot/internal/swarm"
 	"github.com/patriceckhart/zot/internal/tui"
 )
 
@@ -130,6 +131,13 @@ type InteractiveConfig struct {
 	// slash commands. Commands declared by extensions are looked up
 	// AFTER the built-in catalog so a built-in name always wins.
 	Extensions *extensions.Manager
+
+	// Swarm, if non-nil, enables the /swarm slash command and the
+	// dashboard dialog. The cli constructs the Swarm once per
+	// interactive run and tears it down on exit. nil disables the
+	// feature entirely (used by embedders / tests that don't want
+	// subprocesses).
+	Swarm *swarm.Swarm
 
 	// SkillSnapshot, if non-nil, returns the current list of
 	// discovered SKILL.md files. Re-invoked each time /skills opens
@@ -280,6 +288,7 @@ type Interactive struct {
 	modelDialog       *modelDialog
 	rescueDialog      *rescueDialog
 	sessionDialog     *sessionDialog
+	swarmDialog       *swarmDialog
 	jumpDialog        *jumpDialog
 	btwDialog         *btwDialog
 	skillsDialog      *skillsDialog
@@ -367,6 +376,7 @@ func NewInteractive(cfg InteractiveConfig) *Interactive {
 		modelDialog:       newModelDialog(),
 		rescueDialog:      newRescueDialog(),
 		sessionDialog:     newSessionDialog(),
+		swarmDialog:       newSwarmDialog(),
 		jumpDialog:        newJumpDialog(),
 		btwDialog:         newBtwDialog(),
 		skillsDialog:      newSkillsDialog(),
@@ -616,7 +626,16 @@ func (i *Interactive) Run(ctx context.Context) error {
 			// the tick and firing it cancels the terminal's cursor
 			// blink inside dialogs that host their own editor (btw),
 			// because each frame re-emits hide-cursor + show-cursor.
-			if i.busy || i.btwDialog.Loading() {
+			//
+			// The swarm dashboard is also animated: its rows reflect
+			// background subprocesses whose activity / age change
+			// without any user input. Without the tick redraw the
+			// dashboard freezes on the snapshot taken when the user
+			// last pressed a key. We exclude the dashboard when one
+			// of its inline editors (spawn task or prompt composer)
+			// is active so the cursor blink in those editors works
+			// the same way it does inside btw.
+			if i.busy || i.btwDialog.Loading() || i.swarmDialog.NeedsTickRefresh() {
 				requestRedraw()
 			}
 		}
@@ -877,6 +896,8 @@ func (i *Interactive) redraw() {
 		}
 		i.sessionDialog.MaxRows = avail
 		dialog = i.sessionDialog.Render(i.cfg.Theme, cols)
+	case i.swarmDialog.Active():
+		dialog = i.swarmDialog.Render(i.cfg.Theme, cols)
 	case i.jumpDialog.Active():
 		dialog = i.jumpDialog.Render(i.cfg.Theme, cols)
 	case i.btwDialog.Active():
@@ -1024,12 +1045,22 @@ func (i *Interactive) redraw() {
 		bottom = append(bottom, "")
 	}
 	bottom = append(bottom, dialog...)
-	bottom = append(bottom, suggest...)
-	bottom = append(bottom, queue...)
-	bottom = append(bottom, "")
-	bottom = append(bottom, statusLines...)
-	bottom = append(bottom, "")
-	bottom = append(bottom, edLines...)
+	// The swarm dashboard owns the bottom of the screen while it's
+	// active: it has its own inline editors for spawn (`n`) and
+	// prompt (`p`), so the main input would be a confusing second
+	// caret. The suggest popup, sliding-in queue, status block, and
+	// main editor are all hidden underneath it. Keystrokes still
+	// reach handleKey — it routes them to swarmDialog.HandleKey
+	// before the editor ever sees them — so the only effect of this
+	// branch is visual.
+	if !i.swarmDialog.Active() {
+		bottom = append(bottom, suggest...)
+		bottom = append(bottom, queue...)
+		bottom = append(bottom, "")
+		bottom = append(bottom, statusLines...)
+		bottom = append(bottom, "")
+		bottom = append(bottom, edLines...)
+	}
 
 	_, rows := i.cfg.Terminal.Size()
 	chatRows := rows - len(bottom)
@@ -1165,6 +1196,19 @@ func (i *Interactive) redraw() {
 		if r, c := i.sessionDialog.CursorPos(); r >= 0 {
 			cursorRow = dialogLead + r
 			cursorCol = c
+		}
+	}
+	if i.swarmDialog.Active() {
+		if r, c := i.swarmDialog.CursorPos(cols); r >= 0 {
+			cursorRow = dialogLead + r
+			cursorCol = c
+		} else {
+			// Dashboard list / transcript view has no caret. Without
+			// this branch the default cursorRow points at the
+			// (hidden) main editor row, so the terminal would draw
+			// a stray block somewhere in the chat region.
+			cursorRow = -1
+			cursorCol = 0
 		}
 	}
 	if i.extPanel.Active() {
@@ -1475,6 +1519,22 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		if act.Select {
 			i.applySessionSelection(act.Path)
 		}
+		return false
+	}
+	if i.swarmDialog.Active() {
+		if k.Kind == tui.KeyCtrlC {
+			i.swarmDialog.Close()
+			i.invalidate()
+			return false
+		}
+		_, msg, errMsg := i.swarmDialog.HandleKey(k)
+		if msg != "" || errMsg != "" {
+			i.mu.Lock()
+			i.statusOK = msg
+			i.statusErr = errMsg
+			i.mu.Unlock()
+		}
+		i.invalidate()
 		return false
 	}
 	if i.logoutDialog.Active() {
@@ -2395,6 +2455,8 @@ func (i *Interactive) runSlash(ctx context.Context, cmd string) (done bool) {
 			break
 		}
 		i.openSessionOpsDialog()
+	case "/swarm":
+		i.runSwarm(ctx, parts[1:])
 	default:
 		// Last-resort fallback: try the extension manager. Built-in
 		// cases above always win; this branch only fires for slash
