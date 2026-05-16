@@ -3,7 +3,6 @@ package swarm
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -11,16 +10,15 @@ import (
 )
 
 // newTestSwarm builds a Swarm rooted in t.TempDir with the in-memory
-// worktree and a Runner factory the test controls. Returns the swarm
-// plus a slice of runners keyed by spawn order so tests can assert
-// they were actually invoked.
+// and a Runner factory the test controls. Returns the swarm plus a
+// slice of runners keyed by spawn order so tests can assert they
+// were actually invoked.
 func newTestSwarm(t *testing.T, mk func(a *Agent) Runner) *Swarm {
 	t.Helper()
 	root := t.TempDir()
 	return New(Config{
 		Root:      root,
 		RepoRoot:  root,
-		Worktree:  MemWorktree(filepath.Join(root, "worktrees")),
 		NewRunner: mk,
 	})
 }
@@ -58,8 +56,25 @@ func TestSpawnRunsAndCompletes(t *testing.T) {
 	if !strings.Contains(a.ID, "do-a-thing") {
 		t.Fatalf("id %q missing slug", a.ID)
 	}
-	if a.Branch != "swarm/"+a.ID {
-		t.Fatalf("branch = %q", a.Branch)
+	// Every agent shares the host's RepoRoot.
+	if a.Dir != f.cfg.RepoRoot {
+		t.Fatalf("dir = %q; want repo root %q", a.Dir, f.cfg.RepoRoot)
+	}
+}
+
+// TestSpawnAgentSharesRepoRoot verifies the only-mode-we-support:
+// every spawned agent points its cwd at the parent zot's RepoRoot.
+func TestSpawnAgentSharesRepoRoot(t *testing.T) {
+	f := newTestSwarm(t, func(a *Agent) Runner {
+		return RunnerFunc(func(ctx context.Context, sink Sink) error { return nil })
+	})
+	a, err := f.Spawn(context.Background(), "share me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Wait()
+	if a.Dir != f.cfg.RepoRoot {
+		t.Fatalf("Dir = %q; want RepoRoot %q", a.Dir, f.cfg.RepoRoot)
 	}
 }
 

@@ -14,8 +14,7 @@ import (
 type Agent struct {
 	ID      string
 	Task    string
-	Branch  string
-	Dir     string
+	Dir     string // always the host's RepoRoot; agents share its cwd.
 	Started time.Time
 
 	// Model and Provider, when non-empty, override the child

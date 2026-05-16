@@ -1,20 +1,26 @@
 // Package swarm implements zot's multi-agent supervisor.
 //
 // A Swarm manages a set of headless zot subprocesses ("agents")
-// working in their own git worktrees. The interactive TUI exposes
-// the supervisor through the /swarm slash command and a dashboard
-// dialog; non-TUI code can drive it directly through this package.
+// that share the host's working directory. The interactive TUI
+// exposes the supervisor through the /swarm slash command and a
+// dashboard dialog; non-TUI code can drive it directly through
+// this package.
+//
+// Every agent runs with cwd == the parent zot's RepoRoot — the
+// same files the user sees, the same files the main agent edits.
+// There is no git worktree, no per-agent branch, no isolation. If
+// you want parallel edits on a separate branch, use normal git
+// tooling (a real worktree, a different terminal) yourself.
 //
 // Each Agent has:
 //   - a unique id (short slug + nanoseconds)
-//   - a branch name on a fresh git worktree under <root>/swarm/<id>
 //   - a Runner (the thing that actually executes the task)
 //   - a Status string + Activity string that the dashboard reads
 //
 // The Runner abstraction means tests can swap a fake in instead of
 // really spawning a subprocess; the production Runner shells out to
-// `zot --print` so we reuse zot's own model resolution and tooling
-// without re-implementing the agent loop.
+// `zot --swarm-agent ...` so we reuse zot's own model resolution
+// and tooling without re-implementing the agent loop.
 package swarm
 
 import (
@@ -43,30 +49,22 @@ const (
 
 // Config configures a Swarm.
 type Config struct {
-	// Root is the directory under which worktrees + state files live.
+	// Root is the directory under which per-agent state files live.
 	// Typically <ZotHome>/swarm, but tests pass a tempdir.
 	Root string
 
-	// RepoRoot is the path to the user's git repo (CWD of the parent
-	// zot). New worktrees branch off this repo.
+	// RepoRoot is the working directory every spawned agent runs
+	// in — the same cwd the parent zot is using. There is no
+	// per-agent isolation: agents edit the host's files directly.
 	RepoRoot string
 
-	// Worktree creates the per-agent working directory. If nil, the
-	// default git-worktree implementation is used.
-	Worktree WorktreeManager
-
 	// NewRunner produces the Runner for an Agent. If nil, the default
-	// `zot --print` exec runner is used. Tests inject a fake here.
+	// `zot --swarm-agent ...` exec runner is used. Tests inject a fake
+	// here.
 	NewRunner func(a *Agent) Runner
 
 	// Now is a clock seam for tests; defaults to time.Now.
 	Now func() time.Time
-}
-
-// WorktreeManager creates and removes per-agent working directories.
-type WorktreeManager interface {
-	Create(id, branch, base string) (dir string, err error)
-	Remove(id, dir string) error
 }
 
 // Runner executes one agent task. Run blocks until the task finishes,
@@ -118,9 +116,6 @@ func New(cfg Config) *Swarm {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	if cfg.Worktree == nil {
-		cfg.Worktree = &gitWorktree{root: filepath.Join(cfg.Root, "worktrees"), repo: cfg.RepoRoot}
-	}
 	if cfg.NewRunner == nil {
 		cfg.NewRunner = func(a *Agent) Runner { return &execRunner{agent: a} }
 	}
@@ -158,7 +153,7 @@ func (f *Swarm) ActiveSession() string {
 //	  events.jsonl   durable event log (runner-owned)
 //	  in.sock        unix socket inbox  (child-owned)
 //	  session.json   persistent agent session (child-owned)
-//	  meta.json      static metadata (id, task, branch, dir)
+//	  meta.json      static metadata (id, task)
 func (f *Swarm) agentStateDir(id string) string {
 	return filepath.Join(f.cfg.Root, "agents", id)
 }
@@ -173,13 +168,13 @@ type SpawnRequest struct {
 	Provider string // optional override; usually paired with Model
 }
 
-// Spawn creates a new Agent for the given task, sets up its worktree,
-// allocates the on-disk state directory (events log, inbox socket
-// path, session file path), and starts the Runner on a background
-// goroutine. The returned Agent is already in StatusRunning (or
-// StatusFailed if worktree setup failed before the goroutine
-// started). This is the historical signature; callers that want to
-// override the child's model use SpawnReq instead.
+// Spawn creates a new Agent for the given task, allocates its
+// on-disk state directory (events log, inbox socket path, session
+// file path), and starts the Runner on a background goroutine. The
+// returned Agent is already in StatusRunning (or StatusFailed if
+// state setup failed before the goroutine started). This is the
+// historical signature; callers that want to override the child's
+// model use SpawnReq instead.
 func (f *Swarm) Spawn(ctx context.Context, task string) (*Agent, error) {
 	return f.SpawnReq(ctx, SpawnRequest{Task: task})
 }
@@ -187,17 +182,17 @@ func (f *Swarm) Spawn(ctx context.Context, task string) (*Agent, error) {
 // SpawnReq is the full-fat variant of Spawn that accepts a
 // SpawnRequest. Existing callers can keep using Spawn; new code that
 // wants to pin the child's model uses this.
+//
+// Every spawned agent runs with cwd == cfg.RepoRoot — the same
+// working directory as the host. No per-agent worktree, no branch,
+// no isolation. The user explicitly opted out of the worktree flow.
 func (f *Swarm) SpawnReq(ctx context.Context, req SpawnRequest) (*Agent, error) {
 	task := strings.TrimSpace(req.Task)
 	if task == "" {
 		return nil, errors.New("swarm: empty task")
 	}
 	id := newAgentID(task, f.cfg.Now())
-	branch := "swarm/" + id
-	dir, err := f.cfg.Worktree.Create(id, branch, f.cfg.RepoRoot)
-	if err != nil {
-		return nil, fmt.Errorf("worktree create: %w", err)
-	}
+	dir := f.cfg.RepoRoot
 
 	stateDir := f.agentStateDir(id)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -226,7 +221,6 @@ func (f *Swarm) SpawnReq(ctx context.Context, req SpawnRequest) (*Agent, error) 
 	a := &Agent{
 		ID:           id,
 		Task:         task,
-		Branch:       branch,
 		Dir:          dir,
 		Started:      f.cfg.Now(),
 		Model:        strings.TrimSpace(req.Model),
@@ -385,11 +379,15 @@ func (f *Swarm) StopAll() {
 	}
 }
 
-// Remove tears down the worktree for a terminated agent. It is an
-// error to remove an agent that's still running; call Stop first and
-// wait for the status to settle. Detached agents (reloaded from
-// disk) remove cleanly because they have no live runner racing for
-// the same files.
+// Remove tears down the per-agent state for a terminated agent. It
+// is an error to remove an agent that's still running; call Stop
+// first and wait for the status to settle. Detached agents
+// (reloaded from disk) remove cleanly because they have no live
+// runner racing for the same files.
+//
+// Agents share the host's working tree, so Remove never touches
+// any source file — it only deletes the agent's state directory
+// under <root>/agents/<id>/.
 func (f *Swarm) Remove(id string) error {
 	a := f.Get(id)
 	if a == nil {
@@ -397,18 +395,14 @@ func (f *Swarm) Remove(id string) error {
 	}
 	a.mu.Lock()
 	st := a.status
-	dir := a.Dir
 	a.mu.Unlock()
 	if st == StatusRunning || st == StatusPending {
 		return fmt.Errorf("agent %s still %s", a.ID, st)
 	}
-	if err := f.cfg.Worktree.Remove(a.ID, dir); err != nil {
-		return err
-	}
-	// Best-effort cleanup of the per-agent state directory (meta.json,
-	// events.jsonl, session.json, in.sock if it's local). Worktree
-	// removal already succeeded; failing here would leave the user
-	// with no recourse, so swallow the error.
+	// Best-effort cleanup of the per-agent state directory
+	// (meta.json, events.jsonl, session.json, in.sock if it's
+	// local). Failing here would leave the user with no recourse,
+	// so swallow the error.
 	_ = os.RemoveAll(f.agentStateDir(a.ID))
 	f.mu.Lock()
 	delete(f.agents, a.ID)
@@ -427,7 +421,6 @@ func (f *Swarm) Remove(id string) error {
 type AgentSnapshot struct {
 	ID       string
 	Task     string
-	Branch   string
 	Dir      string
 	Status   Status
 	Activity string
@@ -465,7 +458,7 @@ func (a *Agent) Snapshot() AgentSnapshot {
 		errStr = a.lastErr.Error()
 	}
 	return AgentSnapshot{
-		ID: a.ID, Task: a.Task, Branch: a.Branch, Dir: a.Dir,
+		ID: a.ID, Task: a.Task, Dir: a.Dir,
 		Status: a.status, Activity: a.activity,
 		Started: a.Started, Finished: a.finished,
 		Err: errStr, Tail: tail, Lines: lines,

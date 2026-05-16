@@ -187,7 +187,7 @@ Type `/` in the TUI to open the autocomplete popup. Available commands:
 | `/session` | Four ops on the current session: `export` to a portable `.zotsession` file, `import` one back in, `fork` from a past user message into a new branch, `tree` to switch between branches. Opens a picker without an argument; direct forms: `/session export [path]`, `/session import <path>`, `/session fork`, `/session tree`. Default export destination is `~/Downloads`. |
 | `/jump` | Scroll the chat to a previous turn (or `/jump <text>` to filter). |
 | `/btw` | Side chat with full context that doesn't add to the main thread. |
-| `/swarm` | Spawn, monitor, and chat with background subagents. Each gets its own git worktree and runs in parallel with your main session. |
+| `/swarm` | Spawn, monitor, and chat with background subagents. Each runs in parallel with your main session and shares its working directory. |
 | `/skills` | List discovered skills (SKILL.md files) and preview their bodies. |
 | `/compact` | Summarize the transcript into one message to free up context. |
 | `/study` | Run the canned prompt "Read and understand everything in the current directory." so the agent has full project context before you start asking targeted questions. |
@@ -210,7 +210,7 @@ Four ops on the current session. `/session` alone opens a picker; each is also r
 
 - **`/session export [path]`**. Writes the running transcript to a portable `.zotsession` file. Default destination is `~/Downloads/<timestamp>-<session-id>-<prompt-slug>.zotsession`. Pass a path to override; a directory is fine (a dated name is built inside), a bare name gets `.zotsession` appended. The meta's cwd is stripped on the way out so the recipient doesn't see your filesystem layout.
 
-  **What's included.** Only the main chat thread of the running session — messages, tool calls, tool results, compactions, and usage. **`/swarm` subagents are NOT included.** Their transcripts, worktrees (which are real git checkouts under `$ZOT_HOME/swarm/worktrees/<id>` on branch `swarm/<id>`), unix-socket inboxes, and per-agent session files are all machine-local; a `.zotsession` is just a chat transcript and has no way to bundle a git worktree or revive a unix socket on another box. If you want to share a subagent's work, use normal git tooling on its branch (`git push`, `git format-patch`, etc.); if you want the conversation, copy it out of the dashboard manually.
+  **What's included.** Only the main chat thread of the running session — messages, tool calls, tool results, compactions, and usage. **`/swarm` subagents are NOT included.** Their transcripts, unix-socket inboxes, and per-agent session files are all machine-local; a `.zotsession` is just a chat transcript and has no way to revive a unix socket on another box. If you want the conversation, copy it out of the dashboard manually.
 - **`/session import <path>`**. Copies a `.zotsession` file into `$ZOT_HOME/sessions/<cwd-hash>/` with a fresh id and the current cwd, then switches the running agent onto it. Imported sessions are first-class: they show up in `/sessions`, `/jump`, and the tree. Drag-drop paths in the editor are accepted (zot strips the surrounding quotes automatically).
 - **`/session fork`**. Opens a turn picker (same shape as `/jump`). Pick any past user message; zot copies every message up to and including that turn into a new session, records `parent` + `fork_point` in the new meta, and switches onto the branch. The parent session stays on disk. Use it to try a different question without polluting the original transcript, or to rewind after the agent went down the wrong path.
 - **`/session tree`**. Shows every session in the current cwd arranged by parent/child relationships, depth-first with indent per level. The current session is tagged `[current]`. Pick any entry to switch into it. Parentless sessions are roots; branches created via `/session fork` nest under whichever session they were forked from. Orphaned children (whose parent file was deleted) still show as roots so they stay discoverable.
@@ -236,45 +236,47 @@ Inside the overlay: `enter` sends, `esc` cancels an in-flight call (or closes th
 
 ### `/swarm`
 
-Long-running parallel subagents. Each one gets its own git worktree off your current repo (branch `swarm/<id>`), its own persistent session file, and its own background subprocess driving the model. You stay in the main session and check in on them whenever you want — the dashboard is a `/btw`-style chat per agent.
+Background subagents that run alongside your main session. Each one is a separate `zot` subprocess with its own model loop, its own persistent session file, and its own chat in the dashboard — but they all run in **the same working directory as the host**, so they see and edit the same files you do. Spawn one for a side task (“draft the migration”, “investigate this stack trace”, “write the test harness for module X”), keep going in the main thread, check in on it whenever you want.
 
-Why: “go write the test harness for module X” / “investigate this stack trace” / “draft the migration” are perfect side tasks. Spawn an agent, keep working in your main session, come back to its results later — or chat with it interactively while it works.
+> **Agents edit the same files you do.** They use the same `read` / `write` / `edit` / `bash` tools as the main agent against the host's working directory. There's no per-agent worktree or branch. If you need parallel edits on isolated checkouts, set that up yourself with `git worktree` outside zot.
 
 ```
 /swarm                            # open the dashboard
-/swarm new <task>                 # spawn an agent on a fresh worktree
-/swarm new --model gpt-5 <task>   # pin the new agent to a specific model
+/swarm new <task>                 # spawn an agent
+/swarm new --model gpt-5 <task>    # pin the new agent to a specific model
 /swarm logs <id>                  # jump straight into one agent's transcript
 /swarm send <id> <text>           # send a follow-up without opening the dashboard
 /swarm resume                     # pick a stopped agent to bring back
 /swarm resume <id>                # bring a specific agent back
-/swarm kill <id>                  # stop a running agent (worktree stays)
-/swarm remove <id>                # delete the worktree + session for an agent
+/swarm kill <id>                  # stop a running agent (its state stays)
+/swarm remove <id>                # delete the agent's session and state
 /swarm list                       # alias for opening the dashboard
 ```
 
-**Dashboard (`/swarm` with no arg)** — a list of every agent for the current session with status, age, and current activity. Keys:
+**Dashboard (`/swarm` with no arg)** — a list of every agent for the current session, with status, age, and current activity. Keys:
 
-- `↑` / `↓` move the cursor between rows.
-- `enter` opens the highlighted agent's transcript view.
-- `n` spawns a new agent. Type the task, `enter` to confirm; the new agent inherits the model your main session is currently on (see `/model` and the in-editor `/model` command below).
-- `p` opens a one-off prompt editor for the selected row (alternative to entering the transcript).
-- `R` resumes a stopped agent in place.
-- `k` kills the selected running agent (its worktree and session stay so you can resume later).
-- `r` removes the selected agent entirely (worktree + session + meta gone).
-- `esc` closes the dashboard.
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Move cursor between rows. |
+| `enter` | Open the highlighted agent's transcript view. |
+| `n` | Spawn a new agent (opens an inline task editor; inherits the host's current model). |
+| `p` | One-off prompt editor for the selected row (without entering the transcript). |
+| `R` | Resume a stopped agent in place. |
+| `k` | Kill the selected running agent. Its session and state stay so you can resume it later. |
+| `r` | Remove the selected agent entirely (session + meta gone). |
+| `esc` | Close the dashboard. |
 
-**Inside an agent's transcript** — a chat overlay just like `/btw`. The agent's conversation flows above an always-on inline composer; type and hit `enter` to send a follow-up. The view auto-follows streaming output and shows an inline spinner with the agent's current activity (`thinking`, `tool: edit_file`, etc.) while it's busy. `esc` returns to the dashboard.
+**Inside an agent's transcript** — a chat overlay with an always-on inline composer at the bottom. The conversation flows above it; type and `enter` to send a follow-up. The view auto-follows streaming output and shows an inline spinner with the agent's current activity (`thinking`, `tool: edit_file`, etc.) while it's busy. `esc` returns to the dashboard.
 
-**Switching the spawn model from inside the editor** — while composing a task in the `n`-prompt, type `/model` on its own line and `enter`. The same model picker the global `/model` uses pops up; pick a model, the picker closes, and the editor reopens with your typed task intact and the new model pinned for the spawn.
+**Switching the spawn model from inside the editor** — while composing a task in the `n`-prompt, type `/model` on its own line and `enter`. The standard `/model` picker pops up; pick a model, the picker closes, and the editor reopens with your typed task intact and the new model pinned for the spawn.
 
-**Session scoping** — each agent is stamped with the session that spawned it and only shows up in that session's `/swarm` dashboard. Swap sessions with `/sessions` and the dashboard re-narrows accordingly. Agents you spawned in another session keep running and reappear when you switch back. Pre-upgrade agents (no session stamp) are visible from every session as a safety net.
+**Session scoping** — each agent is stamped with the host session that spawned it and only shows up in that session's dashboard. Swap sessions with `/sessions` and the dashboard re-narrows accordingly. Agents from other sessions keep running in the background and reappear when you switch back.
 
-**Persistence across zot restarts** — every spawn writes a `meta.json` next to its event log and session file under `$ZOT_HOME/swarm/agents/<id>/`. On the next `zot` launch they show up in the dashboard as **detached**; press `R` (or `/swarm resume <id>`) to bring one back. Resumed agents reattach to the same worktree, session, branch, and inbox socket, so the conversation continues from where it left off.
+**Persistence across zot restarts** — every spawn writes a `meta.json` next to its event log and session file under `$ZOT_HOME/swarm/agents/<id>/`. On the next `zot` launch they show up in the dashboard as **detached**; press `R` (or `/swarm resume <id>`) to bring one back. Resumed agents reattach to the same session and inbox socket, so the conversation continues from where it left off.
 
-**Where their work lives** — worktrees go under `$ZOT_HOME/swarm/worktrees/<id>` on the branch `swarm/<id>`. Use the normal git tooling to inspect, merge, or rebase (`git worktree list`, `git log swarm/<id>`, etc.). `/swarm remove` deletes both the worktree and the swarm bookkeeping.
+**Where state lives** — everything per-agent (session file, events log, inbox socket, meta) lives under `$ZOT_HOME/swarm/agents/<id>/`. The agent's actual code edits land directly in your repo; track them with normal `git status` / `git diff`.
 
-**`/session export` does NOT bundle subagents.** A `.zotsession` is just the main chat transcript; swarm worktrees and per-agent state are machine-local (a real git worktree on disk and a unix-socket inbox, neither of which round-trips through a JSONL file). To share a subagent's actual work, push its `swarm/<id>` branch with the normal git tooling. To share what it said, copy it out of the transcript view manually.
+**`/session export` does NOT bundle subagents.** A `.zotsession` is just the main chat transcript; per-agent state (session file, unix-socket inbox) is machine-local and doesn't round-trip through a JSONL file. To share what an agent said, copy it out of the transcript view manually.
 
 ### `/skills`
 

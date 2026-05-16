@@ -33,10 +33,13 @@ import (
 // the supervisor needs to rebuild an Agent after a restart live here.
 // Adding a field is backwards-compatible (older meta.json files just
 // leave it zero); removing or renaming one is not.
+//
+// Historical fields like `branch` and `isolated` are silently dropped
+// by encoding/json's permissive decoder when an older meta.json is
+// loaded; we don't need to keep them in the struct.
 type agentMeta struct {
 	ID           string    `json:"id"`
 	Task         string    `json:"task"`
-	Branch       string    `json:"branch"`
 	Dir          string    `json:"dir"`
 	Started      time.Time `json:"started"`
 	Model        string    `json:"model,omitempty"`
@@ -51,8 +54,7 @@ type agentMeta struct {
 	// (and agents spawned outside of any session, e.g. by tests or
 	// scripted callers that didn't call SetActiveSession) have an
 	// empty SessionID and are visible from every session as a
-	// backward-compat fallback. Added in 2026 — a fresh field on a
-	// json struct is backwards-compatible by design.
+	// backward-compat fallback.
 	SessionID string `json:"session_id,omitempty"`
 }
 
@@ -65,7 +67,6 @@ func writeAgentMeta(stateDir string, a *Agent) error {
 	m := agentMeta{
 		ID:           a.ID,
 		Task:         a.Task,
-		Branch:       a.Branch,
 		Dir:          a.Dir,
 		Started:      a.Started,
 		Model:        a.Model,
@@ -187,11 +188,20 @@ func (f *Swarm) Reload() (loaded int, errs []error) {
 // The returned Agent has a closed `done` channel because Wait should
 // return instantly: there is nothing to wait for.
 func (f *Swarm) buildDetachedAgent(m agentMeta) *Agent {
+	// Older meta.json files may still record a per-agent worktree
+	// path under Dir. They predate the decision to run every agent
+	// in the host's repo and shouldn't continue editing that stale
+	// checkout, which most likely no longer matches HEAD. Coerce
+	// the dir back to the live RepoRoot so resume picks up where
+	// the host is now.
+	dir := m.Dir
+	if f.cfg.RepoRoot != "" {
+		dir = f.cfg.RepoRoot
+	}
 	a := &Agent{
 		ID:           m.ID,
 		Task:         m.Task,
-		Branch:       m.Branch,
-		Dir:          m.Dir,
+		Dir:          dir,
 		Started:      m.Started,
 		Model:        m.Model,
 		Provider:     m.Provider,
@@ -334,7 +344,7 @@ func (f *Swarm) Resume(ctx context.Context, id string) (*Agent, error) {
 	// (e.g. tests that hand-built an Agent) don't accidentally route
 	// the new runner at the wrong paths.
 	m := agentMeta{
-		ID: existing.ID, Task: existing.Task, Branch: existing.Branch,
+		ID: existing.ID, Task: existing.Task,
 		Dir: existing.Dir, Started: existing.Started,
 		Model: existing.Model, Provider: existing.Provider,
 		InboxPath: existing.InboxPath, EventLogPath: existing.EventLogPath,
@@ -344,7 +354,6 @@ func (f *Swarm) Resume(ctx context.Context, id string) (*Agent, error) {
 	a := &Agent{
 		ID:           m.ID,
 		Task:         m.Task,
-		Branch:       m.Branch,
 		Dir:          m.Dir,
 		Started:      m.Started,
 		Model:        m.Model,

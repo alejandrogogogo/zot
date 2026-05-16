@@ -110,9 +110,9 @@ func (i *Interactive) runSwarm(ctx context.Context, args []string) {
 			return
 		}
 		if model != "" {
-			i.swarmStatus("spawned "+a.ID+" on "+a.Branch+" (model "+model+")", "")
+			i.swarmStatus("spawned "+a.ID+" (model "+model+")", "")
 		} else {
-			i.swarmStatus("spawned "+a.ID+" on "+a.Branch, "")
+			i.swarmStatus("spawned "+a.ID, "")
 		}
 	case "kill", "stop":
 		if rest == "" {
