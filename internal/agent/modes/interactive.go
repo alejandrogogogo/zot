@@ -1030,7 +1030,7 @@ func (i *Interactive) redraw() {
 		// info on the status bar so it reads as ambient metadata
 		// rather than a chip. Tells the user how to recover the
 		// most recent queued message back into the editor.
-		hint := "  Press Option+↑ to slide back into input"
+		hint := "  Press " + slideBackChordHint() + " to slide back into input"
 		queue = append(queue, i.cfg.Theme.FG256(i.cfg.Theme.Muted, hint))
 	}
 
