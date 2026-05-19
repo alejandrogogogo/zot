@@ -103,6 +103,13 @@ type HostHooks interface {
 	// running it through the agent loop.
 	Submit(text string)
 
+	// SubmitSlash runs text as a slash command in the TUI as if the
+	// user had typed it (text must start with '/'). Unlike Submit it
+	// does NOT run text through the model. Wired to the spontaneous
+	// submit_slash frame from extensions; ignored when the host is
+	// not interactive.
+	SubmitSlash(text string)
+
 	// Insert places text at the cursor in the editor.
 	Insert(text string)
 
@@ -728,6 +735,20 @@ func (m *Manager) readLoop(ext *Extension, scanner *bufio.Scanner) {
 			var n extproto.NotifyFromExt
 			if err := json.Unmarshal(line, &n); err == nil {
 				m.hooks.Notify(ext.Manifest.Name, n.Level, n.Message)
+			}
+		case "submit_slash":
+			// Spontaneous request to invoke a slash command in the
+			// TUI. Refused unless the payload looks like a slash
+			// command so a misbehaving extension can't sneak a model
+			// prompt through this path.
+			var s extproto.SubmitSlashFromExt
+			if err := json.Unmarshal(line, &s); err == nil {
+				text := strings.TrimSpace(s.Text)
+				if strings.HasPrefix(text, "/") {
+					m.hooks.SubmitSlash(text)
+				} else {
+					fmt.Fprintf(ext.logFile, "[zot] submit_slash refused (not a slash command): %q\n", s.Text)
+				}
 			}
 		case "command_response":
 			var cr extproto.CommandResponseFromExt

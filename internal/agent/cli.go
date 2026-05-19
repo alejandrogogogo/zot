@@ -51,6 +51,11 @@ func (h *interactiveExtHooks) Submit(text string) {
 		iv.Submit(text)
 	}
 }
+func (h *interactiveExtHooks) SubmitSlash(text string) {
+	if iv := h.iv(); iv != nil {
+		iv.SubmitSlash(text)
+	}
+}
 func (h *interactiveExtHooks) Insert(text string) {
 	if iv := h.iv(); iv != nil {
 		iv.Insert(text)
@@ -240,6 +245,7 @@ func (nonInteractiveExtHooks) Notify(ext, level, message string) {
 	fmt.Fprintf(os.Stderr, "[%s] %s: %s\n", ext, level, message)
 }
 func (nonInteractiveExtHooks) Submit(string)                                        {}
+func (nonInteractiveExtHooks) SubmitSlash(string)                                   {}
 func (nonInteractiveExtHooks) Insert(string)                                        {}
 func (nonInteractiveExtHooks) Display(string, string)                               {}
 func (nonInteractiveExtHooks) OpenPanel(string, extproto.PanelSpec)                 {}
@@ -675,6 +681,126 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 		return nil
 	}
 
+	// changeCWD switches the running session to a new working directory.
+	// Wired into InteractiveConfig.ChangeCWD and invoked by the hidden
+	// /cd slash command (which itself is only fired by the workspaces
+	// extension's panel-key Enter handler today; the user can type /cd
+	// directly but it's not in autocomplete / help / the README).
+	//
+	// Steps, in order:
+	//   1. resolve + validate the new path (~ expansion, abs/rel)
+	//   2. close the current session, flushing pending messages
+	//   3. mutate captured args.CWD + r.CWD so future buildAgent
+	//      calls bind to the new cwd
+	//   4. re-root the shared sandbox («·«) so /jail follows the
+	//      session into the new cwd instead of widening or silently
+	//      dropping
+	//   5. rebuild the agent via buildAgent() so tools, AGENTS.md
+	//      addendum, system prompt, sessions dir all bind correctly
+	//   6. open a fresh session in the new cwd's bucket
+	//   7. push the new state into the running Interactive
+	//   8. re-scope the swarm dashboard to the freshly-opened session
+	//
+	// The /jail state is preserved verbatim: if the sandbox was locked
+	// to the old cwd, it stays locked, just re-pointed at the new one.
+	changeCWD := func(path string) error {
+		if path == "" {
+			return fmt.Errorf("empty path")
+		}
+		// ~ expansion.
+		if path == "~" || strings.HasPrefix(path, "~/") {
+			home, herr := os.UserHomeDir()
+			if herr != nil || home == "" {
+				return fmt.Errorf("cannot expand ~: %v", herr)
+			}
+			if path == "~" {
+				path = home
+			} else {
+				path = filepath.Join(home, path[2:])
+			}
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(args.CWD, path)
+		}
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(absPath)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("not a directory: %s", absPath)
+		}
+
+		currentAg := ag
+		if currentAg == nil {
+			return fmt.Errorf("no agent running; log in first")
+		}
+
+		// Close the current session before we drop the reference.
+		// Per-message persistence keeps it current already; this is
+		// a defensive flush + final fsync via Close.
+		persistMu.Lock()
+		if sess != nil {
+			writeNewTranscriptLocked(currentAg, sess, sessBaselineMsgs)
+			_ = sess.Close()
+			sess = nil
+		}
+		sessBaselineMsgs = 0
+		persistMu.Unlock()
+
+		// Mutate captured state so subsequent agent rebuilds and
+		// session opens see the new cwd.
+		wasJailed := sharedSandbox != nil && sharedSandbox.Locked()
+		args.CWD = absPath
+		r.CWD = absPath
+		if sharedSandbox != nil {
+			sharedSandbox.Root = absPath
+			if wasJailed {
+				sharedSandbox.Lock()
+			} else {
+				sharedSandbox.Unlock()
+			}
+		}
+
+		// Rebuild the agent so tools / AGENTS.md / system prompt
+		// re-bind to the new cwd. buildAgent() reads from args + r.
+		newAg, newProvider, newModel, berr := buildAgent()
+		if berr != nil {
+			return fmt.Errorf("rebuild agent: %v", berr)
+		}
+		ag = newAg
+
+		// Fresh session in the new cwd's bucket. We bypass
+		// openOrCreateSession's --continue / --resume branches
+		// because /cd's semantics are "start fresh here", matching
+		// what relaunching `zot --cwd <path>` would do today.
+		if !args.NoSess {
+			core.PruneEmptySessions(ZotHome(), absPath)
+			newSess, serr := core.NewSession(ZotHome(), absPath, newProvider, newModel, version)
+			if serr != nil {
+				return fmt.Errorf("open session in %s: %v", absPath, serr)
+			}
+			persistMu.Lock()
+			sess = newSess
+			sessBaselineMsgs = 0
+			persistMu.Unlock()
+		}
+
+		// Push the new state into the running Interactive.
+		if iv != nil {
+			iv.ApplyChangedCWD(newAg, newProvider, newModel, absPath)
+		}
+
+		// Re-scope the swarm dashboard to the new session.
+		if swarmMgr != nil && sess != nil {
+			swarmMgr.SetActiveSession(sess.ID)
+		}
+		return nil
+	}
+
 	term := tui.NewProcTerm()
 
 	// Kick off the async update check so the banner can appear when the
@@ -786,6 +912,7 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 			return out
 		},
 		LoadSession: loadSession,
+		ChangeCWD:   changeCWD,
 		CurrentSessionPath: func() string {
 			if sess == nil {
 				return ""

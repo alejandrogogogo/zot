@@ -25,8 +25,9 @@ func (s *stubHooks) Notify(name, level, message string) {
 	defer s.mu.Unlock()
 	s.notifies = append(s.notifies, name+":"+level+":"+message)
 }
-func (s *stubHooks) Submit(string) {}
-func (s *stubHooks) Insert(string) {}
+func (s *stubHooks) Submit(string)      {}
+func (s *stubHooks) SubmitSlash(string) {}
+func (s *stubHooks) Insert(string)      {}
 func (s *stubHooks) Display(name, text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
