@@ -141,6 +141,10 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 		if v := os.Getenv("OPENAI_API_KEY"); v != "" {
 			return v, "apikey", "", nil
 		}
+	case "openai-codex":
+		// ChatGPT/Codex subscription route. It intentionally ignores
+		// OPENAI_API_KEY so users can keep both OpenAI API and Codex
+		// subscription credentials configured and choose by provider.
 	case "kimi":
 		if v := os.Getenv("KIMI_API_KEY"); v != "" {
 			return v, "apikey", "", nil
@@ -180,6 +184,7 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 		if c.OpenAI.APIKey != "" {
 			return c.OpenAI.APIKey, "apikey", "", nil
 		}
+	case "openai-codex":
 		if c.OpenAI.OAuth != nil && c.OpenAI.OAuth.AccessToken != "" {
 			tok, _ := refreshIfExpired("openai", c.OpenAI.OAuth)
 			return tok.AccessToken, "oauth", tok.AccountID, nil

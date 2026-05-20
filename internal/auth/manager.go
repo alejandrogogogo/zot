@@ -34,9 +34,11 @@ type Manager struct {
 	oauthCtx    context.Context
 	oauthCancel context.CancelFunc
 
-	manualOp    *OAuthProvider
-	manualPKCE  PKCE
-	manualState string
+	manualOp            *OAuthProvider
+	manualStoreProvider string
+	manualEventProvider string
+	manualPKCE          PKCE
+	manualState         string
 }
 
 // NewManager returns a Manager bound to store.
@@ -133,18 +135,20 @@ func (m *Manager) StartOAuth(provider string) (string, error) {
 	if provider == "kimi" {
 		return m.StartKimiDeviceOAuth()
 	}
+	storeProvider := provider
 	var op OAuthProvider
 	switch provider {
 	case "anthropic":
 		op = AnthropicOAuth
-	case "openai":
+	case "openai", "openai-codex":
 		op = OpenAIOAuth
+		storeProvider = "openai"
 	case "google":
 		return "", fmt.Errorf("google login is api-key only; use api key login for gemini")
 	case "deepseek":
 		return "", fmt.Errorf("deepseek login is api-key only; use api key login")
 	default:
-		return "", fmt.Errorf("provider must be anthropic, openai, kimi, deepseek, or google")
+		return "", fmt.Errorf("provider must be anthropic, openai, openai-codex, kimi, deepseek, or google")
 	}
 
 	m.mu.Lock()
@@ -178,13 +182,13 @@ func (m *Manager) StartOAuth(provider string) (string, error) {
 	m.oauthCancel = cancel
 	m.mu.Unlock()
 
-	go m.awaitOAuth(ctx, op, cs, pkce, state)
+	go m.awaitOAuth(ctx, op, storeProvider, provider, cs, pkce, state)
 	go m.maybeOpen(authURL)
 	m.emit(Event{Kind: "started", Provider: provider, Method: "oauth", URL: authURL})
 	return authURL, nil
 }
 
-func (m *Manager) awaitOAuth(ctx context.Context, op OAuthProvider, cs *CallbackServer, pkce PKCE, state string) {
+func (m *Manager) awaitOAuth(ctx context.Context, op OAuthProvider, storeProvider, eventProvider string, cs *CallbackServer, pkce PKCE, state string) {
 	defer cs.Shutdown()
 
 	waitCtx, waitCancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -192,12 +196,12 @@ func (m *Manager) awaitOAuth(ctx context.Context, op OAuthProvider, cs *Callback
 	res, err := cs.Result(waitCtx)
 	if err != nil {
 		if ctx.Err() == nil {
-			m.emit(Event{Kind: "error", Provider: op.Name, Method: "oauth", Message: "timeout waiting for callback"})
+			m.emit(Event{Kind: "error", Provider: eventProvider, Method: "oauth", Message: "timeout waiting for callback"})
 		}
 		return
 	}
 	if res.Err != nil {
-		m.emit(Event{Kind: "error", Provider: op.Name, Method: "oauth", Message: res.Err.Error()})
+		m.emit(Event{Kind: "error", Provider: eventProvider, Method: "oauth", Message: res.Err.Error()})
 		return
 	}
 
@@ -205,14 +209,14 @@ func (m *Manager) awaitOAuth(ctx context.Context, op OAuthProvider, cs *Callback
 	defer exCancel()
 	tok, err := op.Exchange(exCtx, res.Code, res.State, pkce)
 	if err != nil {
-		m.emit(Event{Kind: "error", Provider: op.Name, Method: "oauth", Message: err.Error()})
+		m.emit(Event{Kind: "error", Provider: eventProvider, Method: "oauth", Message: err.Error()})
 		return
 	}
-	if err := m.store.SetOAuth(op.Name, *tok); err != nil {
-		m.emit(Event{Kind: "error", Provider: op.Name, Method: "oauth", Message: err.Error()})
+	if err := m.store.SetOAuth(storeProvider, *tok); err != nil {
+		m.emit(Event{Kind: "error", Provider: eventProvider, Method: "oauth", Message: err.Error()})
 		return
 	}
-	m.emit(Event{Kind: "success", Provider: op.Name, Method: "oauth"})
+	m.emit(Event{Kind: "success", Provider: eventProvider, Method: "oauth"})
 }
 
 // StartKimiDeviceOAuth starts Kimi Code's device-code subscription login.
@@ -258,18 +262,20 @@ func (m *Manager) StartManualOAuth(provider string) (string, error) {
 	if provider == "kimi" {
 		return m.StartKimiDeviceOAuth()
 	}
+	storeProvider := provider
 	var op OAuthProvider
 	switch provider {
 	case "anthropic":
 		op = AnthropicManualOAuth
-	case "openai":
+	case "openai", "openai-codex":
 		op = OpenAIOAuth
+		storeProvider = "openai"
 	case "google":
 		return "", fmt.Errorf("google login is api-key only; use api key login for gemini")
 	case "deepseek":
 		return "", fmt.Errorf("deepseek login is api-key only; use api key login")
 	default:
-		return "", fmt.Errorf("provider must be anthropic, openai, kimi, deepseek, or google")
+		return "", fmt.Errorf("provider must be anthropic, openai, openai-codex, kimi, deepseek, or google")
 	}
 
 	pkce, err := NewPKCE()
@@ -283,6 +289,8 @@ func (m *Manager) StartManualOAuth(provider string) (string, error) {
 
 	m.mu.Lock()
 	m.manualOp = &op
+	m.manualStoreProvider = storeProvider
+	m.manualEventProvider = provider
 	m.manualPKCE = pkce
 	m.manualState = state
 	m.mu.Unlock()
@@ -297,6 +305,8 @@ func (m *Manager) StartManualOAuth(provider string) (string, error) {
 func (m *Manager) CompleteManualOAuth(ctx context.Context, input string) error {
 	m.mu.Lock()
 	op := m.manualOp
+	storeProvider := m.manualStoreProvider
+	eventProvider := m.manualEventProvider
 	pkce := m.manualPKCE
 	state := m.manualState
 	m.mu.Unlock()
@@ -314,19 +324,21 @@ func (m *Manager) CompleteManualOAuth(ctx context.Context, input string) error {
 	defer cancel()
 	tok, err := op.Exchange(exCtx, code, state, pkce)
 	if err != nil {
-		m.emit(Event{Kind: "error", Provider: op.Name, Method: "oauth", Message: err.Error()})
+		m.emit(Event{Kind: "error", Provider: eventProvider, Method: "oauth", Message: err.Error()})
 		return err
 	}
-	if err := m.store.SetOAuth(op.Name, *tok); err != nil {
-		m.emit(Event{Kind: "error", Provider: op.Name, Method: "oauth", Message: err.Error()})
+	if err := m.store.SetOAuth(storeProvider, *tok); err != nil {
+		m.emit(Event{Kind: "error", Provider: eventProvider, Method: "oauth", Message: err.Error()})
 		return err
 	}
 	m.mu.Lock()
 	m.manualOp = nil
+	m.manualStoreProvider = ""
+	m.manualEventProvider = ""
 	m.manualPKCE = PKCE{}
 	m.manualState = ""
 	m.mu.Unlock()
-	m.emit(Event{Kind: "success", Provider: op.Name, Method: "oauth"})
+	m.emit(Event{Kind: "success", Provider: eventProvider, Method: "oauth"})
 	return nil
 }
 

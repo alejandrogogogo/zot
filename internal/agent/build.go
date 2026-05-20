@@ -132,6 +132,8 @@ func defaultModelForProvider(prov string) string {
 	switch prov {
 	case "openai":
 		return "gpt-5"
+	case "openai-codex":
+		return "gpt-5.5"
 	case "kimi":
 		return "kimi-for-coding"
 	case "deepseek":
@@ -156,12 +158,15 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 
 	// User-requested provider (explicit > config > default).
 	provName := firstNonEmpty(args.Provider, cfg.Provider, "anthropic")
-	if provName != "anthropic" && provName != "openai" && provName != "kimi" && provName != "deepseek" && provName != "google" && provName != "ollama" {
+	if provName != "anthropic" && provName != "openai" && provName != "openai-codex" && provName != "kimi" && provName != "deepseek" && provName != "google" && provName != "ollama" {
 		// Unknown provider (maybe removed or renamed). Fall back to
 		// the first provider that has credentials, or anthropic.
 		provName = "anthropic"
 		if _, _, _, err := ResolveCredentialFull("openai", ""); err == nil {
 			provName = "openai"
+		}
+		if _, _, _, err := ResolveCredentialFull("openai-codex", ""); err == nil {
+			provName = "openai-codex"
 		}
 		if _, _, _, err := ResolveCredentialFull("kimi", ""); err == nil {
 			provName = "kimi"
@@ -200,7 +205,7 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 	// never shows a "not logged in" banner.
 	userPickedProvider := args.Provider != ""
 	if credErr != nil && !userPickedProvider && provName != "ollama" {
-		for _, other := range []string{"anthropic", "openai", "kimi", "deepseek", "google"} {
+		for _, other := range []string{"anthropic", "openai", "openai-codex", "kimi", "deepseek", "google"} {
 			if other == provName {
 				continue
 			}
@@ -217,6 +222,8 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 		switch provName {
 		case "openai":
 			model = "gpt-5"
+		case "openai-codex":
+			model = "gpt-5.5"
 		case "kimi":
 			model = "kimi-for-coding"
 		case "deepseek":
@@ -236,6 +243,8 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 			switch provName {
 			case "openai":
 				model = "gpt-5"
+			case "openai-codex":
+				model = "gpt-5.5"
 			case "kimi":
 				model = "kimi-for-coding"
 			case "deepseek":
@@ -521,11 +530,10 @@ func (r Resolved) NewClient() provider.Client {
 	case "deepseek":
 		return provider.NewDeepSeek(r.Credential, r.BaseURL)
 	case "openai":
-		if r.AuthMethod == "oauth" {
-			inner := provider.NewOpenAICodex(r.Credential, r.AccountID, r.BaseURL)
-			return r.wrapWithRefresh(inner)
-		}
 		return provider.NewOpenAI(r.Credential, r.BaseURL)
+	case "openai-codex":
+		inner := provider.NewOpenAICodex(r.Credential, r.AccountID, r.BaseURL)
+		return r.wrapWithRefresh(inner)
 	case "google":
 		// API-key only path. Gemini Generative Language API.
 		return provider.NewGemini(r.Credential, r.BaseURL)
@@ -543,11 +551,15 @@ func (r Resolved) NewClient() provider.Client {
 // sessions (hours) silently fail when the 1-hour token expires.
 func (r Resolved) wrapWithRefresh(inner provider.Client) provider.Client {
 	provName := r.Provider
+	tokenProvider := provName
+	if provName == "openai-codex" {
+		tokenProvider = "openai"
+	}
 	baseURL := r.BaseURL
 	accountID := r.AccountID
 
 	refreshFn := func(ctx context.Context) (string, error) {
-		tok, err := refreshIfExpired(provName, loadOAuthToken(provName))
+		tok, err := refreshIfExpired(tokenProvider, loadOAuthToken(tokenProvider))
 		if err != nil {
 			return "", err
 		}
@@ -556,7 +568,7 @@ func (r Resolved) wrapWithRefresh(inner provider.Client) provider.Client {
 
 	factory := func(token string) provider.Client {
 		switch provName {
-		case "openai":
+		case "openai-codex":
 			return provider.NewOpenAICodex(token, accountID, baseURL)
 		case "kimi":
 			return provider.NewKimiWithHeaders(token, baseURL, kimiCodeHeaders())
@@ -671,7 +683,7 @@ func kimiCodeHeaders() map[string]string {
 
 func envVarName(provider string) string {
 	switch provider {
-	case "openai":
+	case "openai", "openai-codex":
 		return "OPENAI"
 	case "kimi":
 		return "KIMI"

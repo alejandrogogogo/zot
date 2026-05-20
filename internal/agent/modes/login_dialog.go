@@ -28,7 +28,7 @@ const (
 type loginDialog struct {
 	step     loginStep
 	method   string // "apikey" | "oauth"
-	provider string // "anthropic" | "openai" | "kimi" | "google"
+	provider string // "anthropic" | "openai" | "openai-codex" | "kimi" | "google"
 	message  string
 	success  bool
 	url      string
@@ -39,8 +39,8 @@ type loginDialog struct {
 	// provider, captured when Open() runs. Rendered above the
 	// method picker so the user can see whether they're already
 	// logged in (and how) before starting a new flow. Keys:
-	// "anthropic", "openai", "kimi", "google". Value is "apikey", "oauth", or ""
-	// (not logged in).
+	// "anthropic", "openai", "openai-codex", "kimi", "google". Value is
+	// "apikey", "oauth", or "" (not logged in).
 	status map[string]string
 }
 
@@ -65,7 +65,7 @@ func (d *loginDialog) Open(zotHome string) {
 	d.success = false
 	d.url = ""
 	d.cursor = 0
-	d.status = map[string]string{"anthropic": "", "openai": "", "kimi": "", "deepseek": "", "google": ""}
+	d.status = map[string]string{"anthropic": "", "openai": "", "openai-codex": "", "kimi": "", "deepseek": "", "google": ""}
 	// Best-effort: if the auth file can't be read, treat every
 	// provider as not-logged-in. The status line just won't show
 	// anything useful in that case, which is fine — the user
@@ -73,7 +73,14 @@ func (d *loginDialog) Open(zotHome string) {
 	path := filepath.Join(zotHome, "auth.json")
 	if creds, err := auth.NewStore(path).Load(); err == nil {
 		d.status["anthropic"] = creds.Method("anthropic")
-		d.status["openai"] = creds.Method("openai")
+		d.status["openai"] = ""
+		if creds.OpenAI.APIKey != "" {
+			d.status["openai"] = "apikey"
+		}
+		d.status["openai-codex"] = ""
+		if creds.OpenAI.OAuth != nil {
+			d.status["openai-codex"] = "oauth"
+		}
 		d.status["kimi"] = creds.Method("kimi")
 		d.status["deepseek"] = creds.Method("deepseek")
 		d.status["google"] = creds.Method("google")
@@ -205,7 +212,7 @@ func (d *loginDialog) Render(th tui.Theme, width int) []string {
 // subscription product at all).
 func providersForMethod(method string) []string {
 	if method == "oauth" {
-		return []string{"anthropic", "openai", "kimi"}
+		return []string{"anthropic", "openai-codex", "kimi"}
 	}
 	return []string{"anthropic", "openai", "kimi", "deepseek", "google"}
 }
@@ -216,7 +223,9 @@ func providerLabel(id string) string {
 	case "anthropic":
 		return "Anthropic (Claude Pro/Max)"
 	case "openai":
-		return "OpenAI (ChatGPT Plus/Pro)"
+		return "OpenAI"
+	case "openai-codex":
+		return "OpenAI Codex (ChatGPT Plus/Pro)"
 	case "kimi":
 		return "Kimi Code"
 	case "deepseek":
@@ -240,10 +249,11 @@ func providerLabel(id string) string {
 func (d *loginDialog) renderStatusLines(th tui.Theme) []string {
 	anth := d.status["anthropic"]
 	op := d.status["openai"]
+	codex := d.status["openai-codex"]
 	kimi := d.status["kimi"]
 	ds := d.status["deepseek"]
 	goog := d.status["google"]
-	if anth == "" && op == "" && kimi == "" && ds == "" && goog == "" {
+	if anth == "" && op == "" && codex == "" && kimi == "" && ds == "" && goog == "" {
 		return nil
 	}
 	row := func(id, method string) string {
@@ -265,6 +275,7 @@ func (d *loginDialog) renderStatusLines(th tui.Theme) []string {
 	return []string{
 		row("anthropic", anth),
 		row("openai", op),
+		row("openai-codex", codex),
 		row("kimi", kimi),
 		row("deepseek", ds),
 		row("google", goog),
