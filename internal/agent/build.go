@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	zotdocs "github.com/patriceckhart/zot"
 	"github.com/patriceckhart/zot/internal/agent/tools"
 	"github.com/patriceckhart/zot/internal/core"
 	"github.com/patriceckhart/zot/internal/provider"
@@ -77,10 +78,11 @@ func (r *Resolved) MergeExtensionTools(mgr ExtensionToolSource) {
 	// addendum is preserved by walking the existing append slice.
 	append_ := r.systemAppend
 	r.SystemPrompt = BuildSystemPrompt(SystemPromptOpts{
-		CWD:    r.CWD,
-		Tools:  toolSummariesFromRegistry(r.ToolRegistry, r.toolDescriptions),
-		Custom: r.systemCustom,
-		Append: append_,
+		CWD:        r.CWD,
+		Tools:      toolSummariesFromRegistry(r.ToolRegistry, r.toolDescriptions),
+		Custom:     r.systemCustom,
+		Append:     append_,
+		ZotDocsDir: filepath.Join(ZotHome(), "docs"),
 	})
 }
 
@@ -318,6 +320,8 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 	sandbox := tools.NewSandbox(args.CWD)
 	reg := buildToolRegistry(args, args.CWD, sandbox)
 
+	docsDir, _ := zotdocs.EnsureInstalled(ZotHome())
+
 	// Skill discovery: scan project + global locations + built-in
 	// skills shipped with the binary. If any are found, register
 	// the on-demand `skill` loader tool plus a system-prompt
@@ -362,10 +366,11 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 	}
 
 	sys := BuildSystemPrompt(SystemPromptOpts{
-		CWD:    args.CWD,
-		Tools:  summaries,
-		Custom: custom,
-		Append: append_,
+		CWD:        args.CWD,
+		Tools:      summaries,
+		Custom:     custom,
+		Append:     append_,
+		ZotDocsDir: docsDir,
 	})
 
 	reasoning := firstNonEmpty(args.Reasoning, cfg.Reasoning)
