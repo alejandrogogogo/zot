@@ -69,7 +69,7 @@ func renderHelpBlock(th tui.Theme, width int) []string {
 	}
 
 	var out []string
-	out = append(out, frameHeader(th, "zot help", width))
+	out = append(out, frameHeader(th, "zot help", width), "")
 
 	// commands section
 	out = append(out, tui.Bold("slash commands:"))
@@ -87,6 +87,6 @@ func renderHelpBlock(th tui.Theme, width int) []string {
 			th.FG256(th.Muted, k[1])))
 	}
 
-	out = append(out, frameRule(th, width), "")
+	out = append(out, "", frameRule(th, width), "")
 	return out
 }

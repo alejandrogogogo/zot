@@ -33,6 +33,43 @@ func frameRule(th tui.Theme, width int) string {
 	return th.FG256(th.Muted, strings.Repeat("─", width))
 }
 
+// padDialogFrame inserts breathing room between the shared dialog frame
+// chrome and its body while keeping frameHeader/frameRule as single-row
+// primitives for callers that need exact row accounting.
+func padDialogFrame(lines []string) []string {
+	if len(lines) == 0 {
+		return lines
+	}
+
+	out := append([]string(nil), lines...)
+	if isFrameHeaderLine(out[0]) && (len(out) == 1 || strings.TrimSpace(stripANSIBytes(out[1])) != "") {
+		out = append(out[:1], append([]string{""}, out[1:]...)...)
+	}
+
+	last := len(out) - 1
+	if last > 0 && isFrameRuleLine(out[last]) && strings.TrimSpace(stripANSIBytes(out[last-1])) != "" {
+		out = append(out[:last], append([]string{""}, out[last:]...)...)
+	}
+	return out
+}
+
+func isFrameHeaderLine(line string) bool {
+	return strings.HasPrefix(stripANSIBytes(line), "── ")
+}
+
+func isFrameRuleLine(line string) bool {
+	plain := stripANSIBytes(line)
+	if plain == "" {
+		return false
+	}
+	for _, r := range plain {
+		if r != '─' {
+			return false
+		}
+	}
+	return true
+}
+
 // frameHeaderColor is like frameHeader but renders in a caller-supplied
 // 256-color code. Used by the update-available banner which wants a
 // yellow accent on the rules and title.
