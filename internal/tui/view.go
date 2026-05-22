@@ -1113,7 +1113,9 @@ func (v *View) collapseToolBody(lines []string, hasImage bool) []string {
 	total := len(lines)
 	footer := fmt.Sprintf("    ... (%d more lines, %d total, ctrl+o to expand)", hidden, total)
 	footer = v.Theme.FG256(v.Theme.Muted, footer)
-	return append(append([]string(nil), kept...), footer)
+	out := append([]string(nil), kept...)
+	out = append(out, "")
+	return append(out, footer)
 }
 
 // renderToolText renders a text block inside a tool result. If the
@@ -1177,6 +1179,11 @@ func (v *View) renderToolText(text string, width, defaultColor int, sourcePath s
 				oldLine, newLine = o, n
 			}
 			out = append(out, "    "+v.Theme.FG256(v.Theme.Muted, l))
+			continue
+		}
+		if inDiff && strings.TrimSpace(l) == "..." {
+			out = append(out, "")
+			out = append(out, "    "+v.Theme.FG256(v.Theme.Muted, "..."))
 			continue
 		}
 		if inDiff && len(l) > 0 {
@@ -1716,7 +1723,9 @@ func (v *View) renderRawFile(text, sourcePath string, startLine int) []string {
 		lines = lines[:n-1]
 	}
 	// Split code from trailing footer lines ("... [truncated ...]")
-	// so we don't number the footer.
+	// so we don't number the footer. A single blank separator line
+	// immediately before the footer is also pulled out so the
+	// gutter doesn't render a phantom number for it.
 	codeEnd := len(lines)
 	for i := len(lines) - 1; i >= 0; i-- {
 		if strings.HasPrefix(lines[i], "...") {
@@ -1724,6 +1733,9 @@ func (v *View) renderRawFile(text, sourcePath string, startLine int) []string {
 			continue
 		}
 		break
+	}
+	if codeEnd > 0 && codeEnd < len(lines) && lines[codeEnd-1] == "" {
+		codeEnd--
 	}
 	code := lines[:codeEnd]
 	footer := lines[codeEnd:]
