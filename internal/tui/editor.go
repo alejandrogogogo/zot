@@ -1160,7 +1160,7 @@ func max(a, b int) int {
 }
 
 // pasteCollapseLineThreshold and pasteCollapseCharThreshold govern
-// when a bracketed paste gets collapsed to a [pasted text #N …]
+// when a bracketed paste gets collapsed to a [pasted text #N ...]
 // placeholder instead of being inserted inline. Either trigger
 // alone is enough — a 500-line log dump and a 1200-character
 // one-line log entry both bloat the editor in ways the user

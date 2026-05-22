@@ -216,7 +216,11 @@ func (d *confirmDialog) Render(th tui.Theme, width int) []string {
 		// Truncate the tail if the line would exceed width; keeps
 		// the option numbers always visible.
 		if visibleLen(plain) > width-2 {
-			plain = plain[:width-3] + "\u2026"
+			if width <= 5 {
+				plain = "..."[:max(0, width-2)]
+			} else {
+				plain = plain[:width-5] + "..."
+			}
 		}
 		if i == cursor {
 			lines = append(lines, th.PadHighlight(plain, width))

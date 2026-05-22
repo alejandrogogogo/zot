@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -180,5 +181,5 @@ func TestBuildPreview(t *testing.T) {
 }
 
 func hasEllipsis(s string) bool {
-	return len(s) > 0 && s[len(s)-len("\u2026"):] == "\u2026"
+	return strings.HasSuffix(s, "...")
 }

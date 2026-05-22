@@ -149,7 +149,7 @@ func formatTreeRow(n *core.TreeNode) string {
 		}
 	}
 	if len(preview) > 50 {
-		preview = preview[:49] + "\u2026"
+		preview = preview[:47] + "..."
 	}
 	return fmt.Sprintf("%-14s %s  %d msgs", when, preview, n.Summary.MessageCount)
 }

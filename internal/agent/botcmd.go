@@ -427,7 +427,7 @@ func openOrCreateSessionForBot(args Args, r Resolved, ag *core.Agent, version st
 	return s, nil, err
 }
 
-// maskToken returns "123456:ABC…xyz" so copies of zot telegram-bot status can be
+// maskToken returns "123456:ABC...xyz" so copies of zot telegram-bot status can be
 // pasted into bug reports without leaking the full token.
 func maskToken(tok string) string {
 	if len(tok) <= 10 {
@@ -436,13 +436,13 @@ func maskToken(tok string) string {
 	// telegram tokens look like "123456789:ABCD..." — keep the id, mask the body.
 	i := strings.IndexByte(tok, ':')
 	if i < 0 {
-		return tok[:4] + "…" + tok[len(tok)-4:]
+		return tok[:4] + "..." + tok[len(tok)-4:]
 	}
 	body := tok[i+1:]
 	if len(body) < 8 {
 		return tok[:i+1] + "<hidden>"
 	}
-	return tok[:i+1] + body[:3] + "…" + body[len(body)-3:]
+	return tok[:i+1] + body[:3] + "..." + body[len(body)-3:]
 }
 
 // _ compile-time hint so the strconv import stays if we later add numeric parsing.

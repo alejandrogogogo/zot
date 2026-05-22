@@ -173,7 +173,11 @@ func formatSkillRow(s *skills.Skill, maxWidth int) string {
 	}
 	desc := s.Description
 	if len(desc) > room {
-		desc = desc[:room-1] + "\u2026"
+		if room <= 3 {
+			desc = strings.Repeat(".", room)
+		} else {
+			desc = desc[:room-3] + "..."
+		}
 	}
 	return left + desc + src
 }
@@ -185,10 +189,10 @@ func truncateLineSafe(s string, n int) string {
 	if len(r) <= n {
 		return s
 	}
-	if n <= 1 {
-		return "\u2026"
+	if n <= 3 {
+		return strings.Repeat(".", n)
 	}
-	return string(r[:n-1]) + "\u2026"
+	return string(r[:n-3]) + "..."
 }
 
 // visibleWindow centers cursor in a window of size n within total

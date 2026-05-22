@@ -193,13 +193,17 @@ func formatSessionRowPlain(s core.SessionSummary, maxWidth int) string {
 	}
 	runes := []rune(summary)
 	if len(runes) > room {
-		summary = string(runes[:room-1]) + "…"
+		summary = string(runes[:room-3]) + "..."
 	}
 	row := left + summary
 	// Hard clamp: ensure the full row never exceeds maxWidth.
 	rowRunes := []rune(row)
 	if len(rowRunes) > maxWidth {
-		row = string(rowRunes[:maxWidth-1]) + "…"
+		if maxWidth <= 3 {
+			row = strings.Repeat(".", maxWidth)
+		} else {
+			row = string(rowRunes[:maxWidth-3]) + "..."
+		}
 	}
 	return row
 }

@@ -654,7 +654,7 @@ func (v *View) renderMessage(m provider.Message, width int, turnOpen bool) []str
 					// before the metadata caption) are tagged with the
 					// imageFootprintSentinel by renderImageBlock. Strip
 					// the tag, parse the optional width hint, then wrap
-					// the row in the usual │ … │ box edges so the
+					// the row in the usual │ ... │ box edges so the
 					// frame stays continuous around the image.
 					imgCells, stripped := parseImageFootprint(line)
 					if hasImageEscapeLine(stripped) {
@@ -775,7 +775,7 @@ func (v *View) renderLiveToolBody(tc ToolCallView, width int) []string {
 }
 
 // wrapLiveBody returns the streaming body content as a list of
-// box-side rows: each line wrapped in │ … │ with right padding so
+// box-side rows: each line wrapped in │ ... │ with right padding so
 // the closing edge sits at column width-1. The caller (renderToolCall)
 // supplies the surrounding top/bottom edges so the live overlay
 // renders as a closed box matching the finalised transcript form.
@@ -848,10 +848,10 @@ func toolBoxTop(th Theme, label string, width int) string {
 		// terminals (the chat column is usually wide enough).
 		over := -fill
 		runes := []rune(label)
-		if over+1 < len(runes) {
-			label = string(runes[:len(runes)-over-1]) + "…"
+		if over+3 < len(runes) {
+			label = string(runes[:len(runes)-over-3]) + "..."
 		} else {
-			label = "…"
+			label = "..."
 		}
 		used = visibleWidth(prefix) + visibleWidth(label) + visibleWidth(suffix)
 		fill = w - used - 1
@@ -906,7 +906,7 @@ func hasImageEscapeLine(s string) bool {
 // imageFootprintSentinel marks rows that belong to an inline-image's
 // reserved footprint — the escape row plus the blank rows below it
 // plus the gap row before the metadata caption. Any consumer that
-// wraps content in box edges (│ … │) detects the sentinel, strips
+// wraps content in box edges (│ ... │) detects the sentinel, strips
 // it, and emits the row — the image graphics rectangle paints over
 // whatever was drawn there. Uses a non-printing C0 control byte so
 // it can never appear in normal text or in an ANSI escape sequence
@@ -1124,7 +1124,7 @@ func (v *View) collapseToolBody(lines []string, hasImage bool) []string {
 // colors matching git diff conventions.
 func (v *View) renderToolText(text string, width, defaultColor int, sourcePath string, startLine int) []string {
 	// Legacy path: transcripts saved before we dropped line numbers
-	// from the read tool still carry "     1\t…" prefixes. Detect and
+	// from the read tool still carry "     1\t..." prefixes. Detect and
 	// strip them, then fall through to the highlighter.
 	if looksLikeNumberedFile(text) {
 		return v.renderNumberedFile(text, sourcePath)
@@ -1308,7 +1308,10 @@ func (v *View) renderDiffRow(line string, width, color int, lineNo int, mark byt
 	// output is unreliable.
 	maxCode := width - 4 /* indent */ - 7 /* gutter (sign+5 digits+tab) */
 	if maxCode > 0 && len(code) > maxCode {
-		trunc := code[:maxCode-1] + "…"
+		trunc := strings.Repeat(".", maxCode)
+		if maxCode > 3 {
+			trunc = code[:maxCode-3] + "..."
+		}
 		if lang != "" {
 			if h := HighlightCode(trunc, lang); len(h) == 1 {
 				codeRendered = h[0]
@@ -1379,7 +1382,7 @@ func (v *View) renderImageBlock(b provider.ImageBlock, width int) []string {
 			// edge plus a small interior gutter so the image rectangle
 			// sits visibly inside the frame instead of kissing the │.
 			// The escape row carries a width hint after the sentinel
-			// ("\x1e<cells>\x1e\u2026") so toolBoxSide knows how many
+			// ("\x1e<cells>\x1e...") so toolBoxSide knows how many
 			// cells the image occupies and can pad to the right edge.
 			widthHint := fmt.Sprintf("%s%d%s", imageFootprintSentinel, actualCells, imageFootprintSentinel)
 			out := make([]string, 0, rows+3)
@@ -1680,7 +1683,7 @@ func (v *View) renderUnifiedDiff(text string, width int, sourcePath string) []st
 			continue
 		}
 		if l == "..." {
-			out = append(out, "    "+v.Theme.FG256(v.Theme.Muted, "…"))
+			out = append(out, "    "+v.Theme.FG256(v.Theme.Muted, "..."))
 			continue
 		}
 		switch l[0] {
@@ -1899,7 +1902,7 @@ func truncateLines(s string, n int) string {
 	if len(lines) <= n {
 		return s
 	}
-	return strings.Join(lines[:n], "\n") + "\n  … (" + fmt.Sprintf("%d", len(lines)-n) + " more)"
+	return strings.Join(lines[:n], "\n") + "\n  ... (" + fmt.Sprintf("%d", len(lines)-n) + " more)"
 }
 
 // renderCompactionBlock renders a compaction summary as a distinct

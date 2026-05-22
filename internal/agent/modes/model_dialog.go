@@ -188,10 +188,10 @@ func (d *modelDialog) Render(th tui.Theme, width int) []string {
 	}
 
 	if start > 0 {
-		lines = append(lines, th.FG256(th.Muted, fmt.Sprintf("   … %d more above", start)))
+		lines = append(lines, th.FG256(th.Muted, fmt.Sprintf("   ... %d more above", start)))
 	}
 	if end < len(d.view) {
-		lines = append(lines, th.FG256(th.Muted, fmt.Sprintf("   … %d more below", len(d.view)-end)))
+		lines = append(lines, th.FG256(th.Muted, fmt.Sprintf("   ... %d more below", len(d.view)-end)))
 	}
 
 	lines = append(lines, frameRule(th, width))

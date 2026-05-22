@@ -169,7 +169,11 @@ func formatJumpRowPlain(t jumpTarget, maxWidth int) string {
 	}
 	preview := t.Preview
 	if len(preview) > room {
-		preview = preview[:room-1] + "\u2026"
+		if room <= 3 {
+			preview = "..."[:room]
+		} else {
+			preview = preview[:room-3] + "..."
+		}
 	}
 	return left + preview
 }
