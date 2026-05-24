@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -115,10 +117,86 @@ func ProbeAPIKey(ctx context.Context, provider, key string) error {
 			return err
 		}
 		req.Header.Set("authorization", "Bearer "+key)
+	case "xiaomi":
+		req, err = http.NewRequestWithContext(ctx, "GET", "https://api.xiaomimimo.com/v1/models", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("authorization", "Bearer "+key)
+	case "xiaomi-token-plan-ams":
+		req, err = http.NewRequestWithContext(ctx, "GET", "https://token-plan-ams.xiaomimimo.com/v1/models", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("authorization", "Bearer "+key)
+	case "xiaomi-token-plan-cn":
+		req, err = http.NewRequestWithContext(ctx, "GET", "https://token-plan-cn.xiaomimimo.com/v1/models", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("authorization", "Bearer "+key)
+	case "xiaomi-token-plan-sgp":
+		req, err = http.NewRequestWithContext(ctx, "GET", "https://token-plan-sgp.xiaomimimo.com/v1/models", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("authorization", "Bearer "+key)
+	case "minimax":
+		req, err = http.NewRequestWithContext(ctx, "GET", "https://api.minimax.io/v1/models", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("authorization", "Bearer "+key)
+	case "minimax-cn":
+		req, err = http.NewRequestWithContext(ctx, "GET", "https://api.minimaxi.com/v1/models", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("authorization", "Bearer "+key)
+	case "fireworks":
+		req, err = http.NewRequestWithContext(ctx, "GET", "https://api.fireworks.ai/inference/v1/models", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("authorization", "Bearer "+key)
+	case "vercel-ai-gateway":
+		req, err = http.NewRequestWithContext(ctx, "GET", "https://ai-gateway.vercel.sh/v1/models", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("authorization", "Bearer "+key)
+	case "opencode":
+		req, err = http.NewRequestWithContext(ctx, "GET", "https://opencode.ai/zen/v1/models", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("authorization", "Bearer "+key)
+	case "opencode-go":
+		req, err = http.NewRequestWithContext(ctx, "GET", "https://opencode.ai/zen/go/v1/models", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("authorization", "Bearer "+key)
+	case "azure-openai-responses":
+		return nil
+	case "amazon-bedrock":
+		return nil
+	case "google-vertex":
+		return nil
+	case "cloudflare-workers-ai", "cloudflare-ai-gateway":
+		return nil
+	case "github-copilot":
+		return nil
 	default:
 		return fmt.Errorf("unknown provider %q", provider)
 	}
 
+	if strings.Contains(req.URL.String(), "{CLOUDFLARE_ACCOUNT_ID}") {
+		if acct := os.Getenv("CLOUDFLARE_ACCOUNT_ID"); acct != "" {
+			u := strings.ReplaceAll(req.URL.String(), "{CLOUDFLARE_ACCOUNT_ID}", acct)
+			req.URL, _ = req.URL.Parse(u)
+		}
+	}
 	resp, err := c.Do(req)
 	if err != nil {
 		return fmt.Errorf("probe %s: %w", provider, err)

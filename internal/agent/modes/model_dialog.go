@@ -208,6 +208,9 @@ func (d *modelDialog) Render(th tui.Theme, width int) []string {
 	if end < len(d.view) {
 		lines = append(lines, th.FG256(th.Muted, fmt.Sprintf("   ... %d more below", len(d.view)-end)))
 	}
+	if len(d.view) > visible {
+		lines = append(lines, th.FG256(th.Muted, fmt.Sprintf("   (%d/%d)", d.cursor+1, len(d.view))))
+	}
 
 	lines = append(lines, frameRule(th, width))
 	return lines
@@ -254,6 +257,20 @@ func (d *modelDialog) HandleKey(k tui.Key) modelDialogAction {
 	case tui.KeyDown:
 		if d.cursor < len(d.view)-1 {
 			d.cursor++
+		}
+	case tui.KeyPageUp:
+		if len(d.view) > 0 {
+			d.cursor -= 14
+			if d.cursor < 0 {
+				d.cursor = 0
+			}
+		}
+	case tui.KeyPageDown:
+		if len(d.view) > 0 {
+			d.cursor += 14
+			if d.cursor >= len(d.view) {
+				d.cursor = len(d.view) - 1
+			}
 		}
 	case tui.KeyBackspace:
 		if len(d.query) > 0 {

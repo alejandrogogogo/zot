@@ -256,6 +256,9 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 		if v := os.Getenv("COPILOT_GITHUB_TOKEN"); v != "" {
 			return v, "apikey", "", nil
 		}
+		if v := os.Getenv("GITHUB_COPILOT_TOKEN"); v != "" {
+			return v, "apikey", "", nil
+		}
 	case "cloudflare-workers-ai", "cloudflare-ai-gateway":
 		if v := os.Getenv("CLOUDFLARE_API_KEY"); v != "" {
 			return v, "apikey", "", nil
@@ -281,6 +284,9 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 	c, err := AuthStoreFor().Load()
 	if err != nil {
 		return "", "", "", err
+	}
+	if pc, ok := c.AdditionalAPIKeyCreds[provider]; ok && pc.APIKey != "" {
+		return pc.APIKey, "apikey", "", nil
 	}
 	switch provider {
 	case "anthropic":
@@ -325,6 +331,13 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 		// an env var.
 		if c.Google.APIKey != "" {
 			return c.Google.APIKey, "apikey", "", nil
+		}
+	case "github-copilot":
+		if c.GithubCopilot.APIKey != "" {
+			return c.GithubCopilot.APIKey, "apikey", "", nil
+		}
+		if c.GithubCopilot.OAuth != nil && c.GithubCopilot.OAuth.AccessToken != "" {
+			return c.GithubCopilot.OAuth.AccessToken, "oauth", "", nil
 		}
 	}
 	return "", "", "", fmt.Errorf("no credential for %s", provider)
@@ -405,6 +418,10 @@ func loadOAuthToken(providerName string) *auth.OAuthToken {
 			return nil
 		}
 		return loadKimiCodeCLIToken()
+	case "github-copilot":
+		if c.GithubCopilot.OAuth != nil {
+			return c.GithubCopilot.OAuth
+		}
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package modes
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -54,6 +55,8 @@ var slashCatalog = []slashCommand{
 
 // slashSuggester renders the popup that appears when the editor starts
 // with "/". It does not own any input state — the editor drives.
+const slashSuggestPageSize = 8
+
 type slashSuggester struct {
 	cursor int
 
@@ -277,6 +280,32 @@ func (s *slashSuggester) Down() {
 	s.skipHeader(+1)
 }
 
+func (s *slashSuggester) PageUp() {
+	if len(s.lastMatches) == 0 {
+		return
+	}
+	s.cursor -= slashSuggestPageSize
+	if s.cursor < 0 {
+		s.cursor = 0
+	}
+	if s.lastMatches[s.cursor].Header {
+		s.skipHeader(+1)
+	}
+}
+
+func (s *slashSuggester) PageDown() {
+	if len(s.lastMatches) == 0 {
+		return
+	}
+	s.cursor += slashSuggestPageSize
+	if s.cursor >= len(s.lastMatches) {
+		s.cursor = len(s.lastMatches) - 1
+	}
+	if s.lastMatches[s.cursor].Header {
+		s.skipHeader(-1)
+	}
+}
+
 // skipHeader moves the cursor by step, then keeps moving in the same
 // direction across header rows until it lands on a real command (or
 // hits the edge, in which case it bounces back to the nearest real
@@ -341,6 +370,24 @@ func (s *slashSuggester) Selection(input string) string {
 	return m[s.cursor].Name
 }
 
+func (s *slashSuggester) page(total int) (start, end int) {
+	if total <= slashSuggestPageSize {
+		return 0, total
+	}
+	if s.cursor < 0 {
+		s.cursor = 0
+	}
+	if s.cursor >= total {
+		s.cursor = total - 1
+	}
+	start = (s.cursor / slashSuggestPageSize) * slashSuggestPageSize
+	end = start + slashSuggestPageSize
+	if end > total {
+		end = total
+	}
+	return start, end
+}
+
 // Render returns the popup lines or nil.
 func (s *slashSuggester) Render(input string, th tui.Theme, width int) []string {
 	m := s.matches(input)
@@ -371,8 +418,10 @@ func (s *slashSuggester) Render(input string, th tui.Theme, width int) []string 
 			nameWidth = n
 		}
 	}
+	start, end := s.page(len(m))
 	var lines []string
-	for i, c := range m {
+	for i := start; i < end; i++ {
+		c := m[i]
 		if c.Header {
 			// Breathing room around group dividers — a blank row
 			// before AND after makes the boundary read at a glance.
@@ -396,6 +445,9 @@ func (s *slashSuggester) Render(input string, th tui.Theme, width int) []string 
 		} else {
 			lines = append(lines, th.FG256(th.Muted, plain))
 		}
+	}
+	if len(m) > slashSuggestPageSize {
+		lines = append(lines, th.FG256(th.Muted, fmt.Sprintf("  (%d/%d)", s.cursor+1, len(m))))
 	}
 	// Blank row before the hint visually detaches it from the
 	// command list and groups it with its trailing blank.

@@ -96,15 +96,32 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // isKnownAPIKeyProvider reports whether the given provider supports
-// API-key login through the loopback flow. Kept centralized so adding a
-// provider only touches one place. OAuth-only paths are handled
+// API-key login through the loopback flow. OAuth-only paths are handled
 // elsewhere (manager.StartOAuth).
 func isKnownAPIKeyProvider(p string) bool {
-	switch p {
-	case "anthropic", "openai", "kimi", "google", "deepseek":
-		return true
+	for _, provider := range APIKeyProviders() {
+		if p == provider {
+			return true
+		}
 	}
 	return false
+}
+
+func apiKeyProviderMessage() string {
+	return "provider must be one of: " + strings.Join(APIKeyProviders(), ", ")
+}
+
+// APIKeyProviders is the ordered list shown by /login -> api key.
+func APIKeyProviders() []string {
+	return []string{
+		"anthropic", "openai", "kimi", "deepseek", "google",
+		"moonshotai", "moonshotai-cn", "groq", "cerebras", "xai", "together",
+		"huggingface", "openrouter", "mistral", "zai",
+		"xiaomi", "xiaomi-token-plan-ams", "xiaomi-token-plan-cn", "xiaomi-token-plan-sgp",
+		"minimax", "minimax-cn", "fireworks", "vercel-ai-gateway",
+		"opencode", "opencode-go", "amazon-bedrock", "google-vertex", "azure-openai-responses",
+		"github-copilot", "cloudflare-workers-ai", "cloudflare-ai-gateway",
+	}
 }
 
 // ---- handlers ----
@@ -124,7 +141,7 @@ func (s *Server) handleAPIKey(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		provider := r.URL.Query().Get("provider")
 		if !isKnownAPIKeyProvider(provider) {
-			http.Error(w, "provider must be anthropic, openai, kimi, deepseek, or google", http.StatusBadRequest)
+			http.Error(w, apiKeyProviderMessage(), http.StatusBadRequest)
 			return
 		}
 		tpl.ExecuteTemplate(w, "apikey", map[string]any{"Provider": provider})
@@ -244,7 +261,7 @@ var tpl = template.Must(template.New("index").Parse(`<!doctype html><html lang="
   <a href="/apikey?provider=google">google gemini api key →</a>
 </p>
 <hr class="rule">
-<p class="muted">for a subscription login (claude pro/max - chatgpt plus/pro - kimi code), close this tab and run /login inside <span class="zot">zot</span>.</p>
+<p class="muted">for a subscription login (claude pro/max - chatgpt plus/pro - kimi code - github copilot), close this tab and run /login inside <span class="zot">zot</span>.</p>
 </body></html>`))
 
 func init() {
