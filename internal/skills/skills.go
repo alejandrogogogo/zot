@@ -83,10 +83,10 @@ func VisibleSkills(in []*Skill) []*Skill {
 	return out
 }
 
-// Discover returns the merged skill set. By default this is just
-// the built-in skills compiled into the zot binary; user-installed
-// SKILL.md files are NOT loaded unless includeUser is true. Users
-// opt in via the `--with-skills` flag.
+// Discover returns the merged skill set. When includeUser is true,
+// user-installed SKILL.md files are loaded before built-ins. Callers
+// normally pass true; --no-skill skips discovery entirely before this
+// function is called.
 //
 // First-match-wins per name; the order matches the priority list
 // in the package doc (project-local before global before claude-
