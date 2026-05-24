@@ -34,8 +34,9 @@ const defaultAzureAPIVersion = "2024-10-21"
 
 // azureRewriteTransport rewrites every outgoing OpenAI Chat Completions
 // URL into the Azure deployment-scoped shape:
-//   /openai/v1/chat/completions  ->
-//   /openai/deployments/{model}/chat/completions?api-version={v}
+//
+//	/openai/v1/chat/completions  ->
+//	/openai/deployments/{model}/chat/completions?api-version={v}
 //
 // The model id is read from the JSON body of the POST so we don't need to
 // thread it through the client at construction time. This keeps the
