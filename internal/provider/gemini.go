@@ -8,8 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Google Gemini provider, talking directly to the Generative Language
@@ -145,8 +149,12 @@ func (c *geminiClient) buildRequest(req Request) (*gemRequest, string, error) {
 		}
 	}
 
-	// Convert tool defs.
-	if len(req.Tools) > 0 {
+	functionsEnabled := geminiSupportsFunctionCalling(m.ID)
+
+	// Convert tool defs. Gemini image-generation models reject function
+	// declarations with "Function calling is not enabled for this model";
+	// for those models, send a direct multimodal prompt instead.
+	if functionsEnabled && len(req.Tools) > 0 {
 		decls := make([]gemFunctionDecl, 0, len(req.Tools))
 		for _, t := range req.Tools {
 			schema := t.Schema
@@ -179,8 +187,13 @@ func (c *geminiClient) buildRequest(req Request) (*gemRequest, string, error) {
 	}
 	out.GenerationConfig = gc
 
-	// Convert messages.
-	msgs := RepairOrphanedToolResults(req.Messages)
+	// Convert messages. When function calling is disabled for the target
+	// model, also remove historical functionCall/functionResponse parts;
+	// image models should receive only text/image content.
+	msgs := req.Messages
+	if functionsEnabled {
+		msgs = RepairOrphanedToolResults(req.Messages)
+	}
 	for _, msg := range msgs {
 		switch msg.Role {
 		case RoleUser:
@@ -190,12 +203,15 @@ func (c *geminiClient) buildRequest(req Request) (*gemRequest, string, error) {
 			}
 			out.Contents = append(out.Contents, gemContent{Role: "user", Parts: parts})
 		case RoleAssistant:
-			parts := convertGemAssistantParts(msg.Content)
+			parts := convertGemAssistantParts(msg.Content, functionsEnabled)
 			if len(parts) == 0 {
 				continue
 			}
 			out.Contents = append(out.Contents, gemContent{Role: "model", Parts: parts})
 		case RoleTool:
+			if !functionsEnabled {
+				continue
+			}
 			// Each tool_result becomes a user-role message with a
 			// functionResponse part. Gemini's protocol uses
 			// "user" role for tool replies.
@@ -231,7 +247,7 @@ func convertGemUserParts(blocks []Content) []gemPart {
 	return parts
 }
 
-func convertGemAssistantParts(blocks []Content) []gemPart {
+func convertGemAssistantParts(blocks []Content, functionsEnabled bool) []gemPart {
 	var parts []gemPart
 	for _, b := range blocks {
 		switch v := b.(type) {
@@ -241,6 +257,9 @@ func convertGemAssistantParts(blocks []Content) []gemPart {
 			}
 			parts = append(parts, gemPart{Text: v.Text})
 		case ToolCallBlock:
+			if !functionsEnabled {
+				continue
+			}
 			args := v.Arguments
 			if len(args) == 0 || !json.Valid(args) {
 				args = json.RawMessage("{}")
@@ -254,6 +273,34 @@ func convertGemAssistantParts(blocks []Content) []gemPart {
 		}
 	}
 	return parts
+}
+
+func geminiSupportsFunctionCalling(modelID string) bool {
+	id := strings.ToLower(modelID)
+	// Gemini image generation/editing models accept direct multimodal
+	// prompts but reject tools/function declarations.
+	if strings.Contains(id, "flash-image") || strings.Contains(id, "image-generation") {
+		return false
+	}
+	return true
+}
+
+func saveGeminiImageToWorkingDir(mimeType string, data []byte) (string, error) {
+	ext := ".png"
+	switch strings.ToLower(mimeType) {
+	case "image/jpeg", "image/jpg":
+		ext = ".jpg"
+	case "image/webp":
+		ext = ".webp"
+	case "image/gif":
+		ext = ".gif"
+	}
+	name := "zot-gemini-image-" + uuid.NewString() + ext
+	path := filepath.Join(".", name)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func convertGemToolResultParts(blocks []Content) []gemPart {
@@ -433,11 +480,13 @@ func (c *geminiClient) runStream(ctx context.Context, resp *http.Response, req R
 	// candidate carries a list of parts (text or functionCall),
 	// possibly accumulating across chunks.
 	type blockEntry struct {
-		kind     string // "text" | "tool_use"
-		textBuf  strings.Builder
-		toolID   string
-		toolName string
-		toolArgs strings.Builder
+		kind      string // "text" | "image" | "tool_use"
+		textBuf   strings.Builder
+		image     *ImageBlock
+		imagePath string
+		toolID    string
+		toolName  string
+		toolArgs  strings.Builder
 	}
 	var (
 		blocks      []*blockEntry
@@ -454,6 +503,18 @@ func (c *geminiClient) runStream(ctx context.Context, resp *http.Response, req R
 			blocks = append(blocks, currentText)
 		}
 		currentText.textBuf.WriteString(delta)
+	}
+
+	appendImage := func(mimeType, dataB64 string) {
+		data, err := base64.StdEncoding.DecodeString(dataB64)
+		if err != nil || len(data) == 0 {
+			return
+		}
+		img := ImageBlock{MimeType: mimeType, Data: data}
+		path, _ := saveGeminiImageToWorkingDir(mimeType, data)
+		blocks = append(blocks, &blockEntry{kind: "image", image: &img, imagePath: path})
+		// Image blocks break the current text run.
+		currentText = nil
 	}
 
 	startTool := func(name string, providedID string, args json.RawMessage) *blockEntry {
@@ -483,6 +544,13 @@ func (c *geminiClient) runStream(ctx context.Context, resp *http.Response, req R
 			case "text":
 				if b.textBuf.Len() > 0 {
 					content = append(content, TextBlock{Text: b.textBuf.String()})
+				}
+			case "image":
+				if b.image != nil && len(b.image.Data) > 0 {
+					content = append(content, *b.image)
+					if b.imagePath != "" {
+						content = append(content, TextBlock{Text: fmt.Sprintf("Saved image: `%s`", b.imagePath)})
+					}
 				}
 			case "tool_use":
 				args := b.toolArgs.String()
@@ -524,6 +592,7 @@ func (c *geminiClient) runStream(ctx context.Context, resp *http.Response, req R
 						Role  string `json:"role"`
 						Parts []struct {
 							Text             string           `json:"text"`
+							InlineData       *gemInlineData   `json:"inlineData"`
 							Thought          bool             `json:"thought"`
 							FunctionCall     *gemFunctionCall `json:"functionCall"`
 							FunctionCallID   string           `json:"id"`
@@ -556,6 +625,10 @@ func (c *geminiClient) runStream(ctx context.Context, resp *http.Response, req R
 			}
 			for _, cand := range chunk.Candidates {
 				for _, part := range cand.Content.Parts {
+					if part.InlineData != nil {
+						appendImage(part.InlineData.MimeType, part.InlineData.Data)
+						continue
+					}
 					if part.FunctionCall != nil {
 						var args json.RawMessage
 						if len(part.FunctionCall.Args) > 0 {

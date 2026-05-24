@@ -203,6 +203,7 @@ type chatCacheKey struct {
 	updateURL       string
 	welcomeShowVer  bool
 	expandAll       bool
+	tailLimit       int
 }
 
 // SettingsStore persists user-toggleable settings surfaced by /settings.
@@ -367,6 +368,23 @@ type Interactive struct {
 // enough to read at a glance and keeps the splash short.
 const welcomeVersionDuration = 1500 * time.Millisecond
 
+// initialResumeTailLimit caps how many messages from a freshly-resumed
+// transcript we render on the first paint. The full transcript is
+// still in memory; older messages are rendered (and their cached
+// lines kept for the lifetime of the View) as soon as the user
+// scrolls past the rendered tail. Picked to comfortably fill the
+// largest realistic terminal viewport while keeping first paint
+// snappy on multi-thousand-message sessions where markdown / syntax
+// highlighting dominates the redraw cost.
+const initialResumeTailLimit = 80
+
+// resumeTailExpandStep is how many additional messages the tail
+// limit grows by each time the user scrolls past the currently
+// rendered top. Pre-rendering this many messages on a single tick
+// keeps scroll-up smooth without falling back to a one-by-one
+// reveal that would feel jerky.
+const resumeTailExpandStep = 80
+
 // NewInteractive constructs an Interactive from cfg.
 func NewInteractive(cfg InteractiveConfig) *Interactive {
 	i := &Interactive{
@@ -407,6 +425,18 @@ func NewInteractive(cfg InteractiveConfig) *Interactive {
 		i.agent = cfg.Agent
 		i.view.Messages = cfg.Agent.Messages()
 		i.cumUsage = cfg.Agent.Cost()
+		// Rehydrate the "context used" gauge from the last persisted
+		// turn. Without this the status bar reads 0.0% after a resume
+		// until the next turn lands a usage event.
+		if last := cfg.Agent.LastTurnUsage(); last.InputTokens > 0 || last.CacheReadTokens > 0 || last.CacheWriteTokens > 0 {
+			i.lastCtxInput = last.InputTokens + last.CacheReadTokens + last.CacheWriteTokens
+		}
+		// Cap the first paint at the tail of the transcript so
+		// resuming a multi-thousand-message session doesn't block
+		// on rendering every prior turn before showing anything.
+		if len(i.view.Messages) > initialResumeTailLimit {
+			i.view.TailLimit = initialResumeTailLimit
+		}
 	}
 	return i
 }
@@ -700,6 +730,7 @@ func (i *Interactive) chatCacheKeyLocked(cols int) (chatCacheKey, bool) {
 		updateURL:       i.updateInfo.URL,
 		welcomeShowVer:  showVer,
 		expandAll:       i.view.ExpandAll,
+		tailLimit:       i.view.TailLimit,
 	}, true
 }
 
@@ -1113,6 +1144,28 @@ func (i *Interactive) redraw() {
 	maxOffset := len(chat) - chatRows
 	if maxOffset < 0 {
 		maxOffset = 0
+	}
+	// Tail-render expansion: if the user has scrolled to (or above)
+	// the top of the currently rendered tail and there are still
+	// truncated messages above, widen view.TailLimit and rebuild.
+	// The chat cache is keyed on tailLimit so the next cachedChatLocked
+	// will re-issue Build instead of returning the stale slice. We
+	// rebuild immediately so the same redraw shows the freshly-revealed
+	// rows; otherwise the user would have to scroll again to see them.
+	if i.scrollOffset >= maxOffset && i.view.TailLimit > 0 && i.view.TailLimit < len(i.view.Messages) {
+		i.view.TailLimit += resumeTailExpandStep
+		if i.view.TailLimit >= len(i.view.Messages) {
+			i.view.TailLimit = 0 // unbounded
+		}
+		i.chatCacheValid = false
+		chat = i.cachedChatLocked(cols)
+		for len(chat) > 0 && strings.TrimSpace(chat[len(chat)-1]) == "" {
+			chat = chat[:len(chat)-1]
+		}
+		maxOffset = len(chat) - chatRows
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
 	}
 	if i.scrollOffset > maxOffset {
 		i.scrollOffset = maxOffset
@@ -3279,6 +3332,19 @@ func (i *Interactive) applySessionSelection(path string) {
 		if i.agent != nil {
 			i.view.Messages = i.agent.Messages()
 			i.cumUsage = i.agent.Cost()
+			if last := i.agent.LastTurnUsage(); last.InputTokens > 0 || last.CacheReadTokens > 0 || last.CacheWriteTokens > 0 {
+				i.lastCtxInput = last.InputTokens + last.CacheReadTokens + last.CacheWriteTokens
+			} else {
+				i.lastCtxInput = 0
+			}
+			// Snap to the tail again — the swap brought in a fresh
+			// transcript whose markdown / chroma cost we don't want
+			// blocking the redraw.
+			if len(i.view.Messages) > initialResumeTailLimit {
+				i.view.TailLimit = initialResumeTailLimit
+			} else {
+				i.view.TailLimit = 0
+			}
 		}
 		i.invalidate()
 	}()

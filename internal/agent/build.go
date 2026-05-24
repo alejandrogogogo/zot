@@ -134,6 +134,8 @@ func defaultModelForProvider(prov string) string {
 		return "gpt-5"
 	case "openai-codex":
 		return "gpt-5.5"
+	case "openai-responses":
+		return "gpt-5"
 	case "kimi":
 		return "kimi-for-coding"
 	case "deepseek":
@@ -142,9 +144,73 @@ func defaultModelForProvider(prov string) string {
 		return "gemini-2.5-pro"
 	case "ollama":
 		return ""
+	case "moonshotai", "moonshotai-cn":
+		return "kimi-k2.6"
+	case "cerebras":
+		return "qwen-3-235b-a22b-instruct-2507"
+	case "groq":
+		return "llama-3.3-70b-versatile"
+	case "xai":
+		return "grok-code-fast-1"
+	case "together":
+		return "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+	case "huggingface":
+		return "moonshotai/Kimi-K2-Instruct"
+	case "openrouter":
+		return "anthropic/claude-sonnet-4.5"
+	case "mistral":
+		return "mistral-large-latest"
+	case "zai":
+		return "glm-4.7"
+	case "xiaomi", "xiaomi-token-plan-ams", "xiaomi-token-plan-cn", "xiaomi-token-plan-sgp":
+		return "mimo-v2.5"
+	case "minimax", "minimax-cn":
+		return "MiniMax-M2.7"
+	case "fireworks":
+		return "accounts/fireworks/models/kimi-k2p6"
+	case "vercel-ai-gateway":
+		return "anthropic/claude-sonnet-4.5"
+	case "opencode":
+		return "claude-sonnet-4-5"
+	case "opencode-go":
+		return "kimi-k2.6"
+	case "amazon-bedrock":
+		return "anthropic.claude-sonnet-4-5-20250929-v1:0"
+	case "google-vertex":
+		return "gemini-2.5-pro"
+	case "azure-openai-responses":
+		return "gpt-5"
+	case "github-copilot":
+		return "claude-sonnet-4.5"
 	default:
 		return provider.DefaultModel.ID
 	}
+}
+
+// knownProviders is the set of provider ids zot recognises. Used by
+// Resolve to validate args.Provider, by extension-callers, and by the
+// auto-fallback logic that picks any logged-in provider when the user's
+// preferred one has no credentials.
+var knownProviders = []string{
+	"anthropic", "openai", "openai-codex", "openai-responses", "kimi", "deepseek", "google", "ollama",
+	"moonshotai", "moonshotai-cn",
+	"cerebras", "groq", "xai", "together", "huggingface", "openrouter",
+	"mistral", "zai",
+	"xiaomi", "xiaomi-token-plan-ams", "xiaomi-token-plan-cn", "xiaomi-token-plan-sgp",
+	"minimax", "minimax-cn",
+	"fireworks", "vercel-ai-gateway",
+	"opencode", "opencode-go",
+	"amazon-bedrock", "google-vertex", "azure-openai-responses",
+	"github-copilot", "cloudflare-workers-ai", "cloudflare-ai-gateway",
+}
+
+func isKnownProvider(name string) bool {
+	for _, p := range knownProviders {
+		if p == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Resolve merges args, config, and env into a Resolved set.
@@ -158,7 +224,7 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 
 	// User-requested provider (explicit > config > default).
 	provName := firstNonEmpty(args.Provider, cfg.Provider, "anthropic")
-	if provName != "anthropic" && provName != "openai" && provName != "openai-codex" && provName != "kimi" && provName != "deepseek" && provName != "google" && provName != "ollama" {
+	if !isKnownProvider(provName) {
 		// Unknown provider (maybe removed or renamed). Fall back to
 		// the first provider that has credentials, or anthropic.
 		provName = "anthropic"
@@ -219,41 +285,16 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 
 	model := firstNonEmpty(args.Model, cfg.Model)
 	if model == "" {
-		switch provName {
-		case "openai":
-			model = "gpt-5"
-		case "openai-codex":
-			model = "gpt-5.5"
-		case "kimi":
-			model = "kimi-for-coding"
-		case "deepseek":
-			model = "deepseek-v4-pro"
-		case "google":
-			model = "gemini-2.5-pro"
-		case "ollama":
+		if provName == "ollama" {
 			return Resolved{}, fmt.Errorf("ollama requires --model (e.g. --model llama3)")
-		default:
-			model = provider.DefaultModel.ID
 		}
+		model = defaultModelForProvider(provName)
 	}
 	// If the resolved model belongs to a different provider (e.g. config
 	// says gpt-5 but we fell back to anthropic), pick that provider's default.
 	if provName != "ollama" {
 		if m, err := provider.FindModel("", model); err == nil && m.Provider != provName {
-			switch provName {
-			case "openai":
-				model = "gpt-5"
-			case "openai-codex":
-				model = "gpt-5.5"
-			case "kimi":
-				model = "kimi-for-coding"
-			case "deepseek":
-				model = "deepseek-v4-pro"
-			case "google":
-				model = "gemini-2.5-pro"
-			default:
-				model = provider.DefaultModel.ID
-			}
+			model = defaultModelForProvider(provName)
 		}
 	}
 	resolvedModel, err := provider.FindModel(provName, model)
@@ -522,11 +563,17 @@ func (r Resolved) NewClient() provider.Client {
 	case "ollama":
 		return provider.NewOpenAI(r.Credential, r.BaseURL)
 	case "kimi":
-		inner := provider.NewKimiWithHeaders(r.Credential, r.BaseURL, kimiCodeHeaders())
+		// kimi-coding speaks anthropic-messages on api.kimi.com/coding.
+		// Subscription OAuth (refreshed) wraps the same Anthropic-shaped client.
+		inner := provider.NewKimiCodingWithHeaders(r.Credential, r.BaseURL, kimiCodeHeaders())
 		if r.AuthMethod == "oauth" {
 			return r.wrapWithRefresh(inner)
 		}
 		return inner
+	case "moonshotai":
+		return provider.NewMoonshot(r.Credential, r.BaseURL)
+	case "moonshotai-cn":
+		return provider.NewMoonshotCN(r.Credential, r.BaseURL)
 	case "deepseek":
 		return provider.NewDeepSeek(r.Credential, r.BaseURL)
 	case "openai":
@@ -534,9 +581,61 @@ func (r Resolved) NewClient() provider.Client {
 	case "openai-codex":
 		inner := provider.NewOpenAICodex(r.Credential, r.AccountID, r.BaseURL)
 		return r.wrapWithRefresh(inner)
+	case "openai-responses":
+		// Public OpenAI Responses API (api.openai.com/v1/responses) via
+		// API key. Separate provider from `openai` (Chat Completions) and
+		// from `openai-codex` (ChatGPT subscription OAuth).
+		return provider.NewOpenAIResponses(r.Credential, r.BaseURL)
 	case "google":
-		// API-key only path. Gemini Generative Language API.
 		return provider.NewGemini(r.Credential, r.BaseURL)
+	case "cerebras":
+		return provider.NewCerebras(r.Credential, r.BaseURL)
+	case "groq":
+		return provider.NewGroq(r.Credential, r.BaseURL)
+	case "xai":
+		return provider.NewXAI(r.Credential, r.BaseURL)
+	case "together":
+		return provider.NewTogether(r.Credential, r.BaseURL)
+	case "huggingface":
+		return provider.NewHuggingFace(r.Credential, r.BaseURL)
+	case "openrouter":
+		return provider.NewOpenRouter(r.Credential, r.BaseURL)
+	case "zai":
+		return provider.NewZAI(r.Credential, r.BaseURL)
+	case "xiaomi":
+		return provider.NewXiaomi(r.Credential, r.BaseURL)
+	case "xiaomi-token-plan-ams":
+		return provider.NewXiaomiTokenPlan("ams", r.Credential, r.BaseURL)
+	case "xiaomi-token-plan-cn":
+		return provider.NewXiaomiTokenPlan("cn", r.Credential, r.BaseURL)
+	case "xiaomi-token-plan-sgp":
+		return provider.NewXiaomiTokenPlan("sgp", r.Credential, r.BaseURL)
+	case "opencode":
+		return provider.NewOpenCode(r.Credential, r.BaseURL)
+	case "opencode-go":
+		return provider.NewOpenCodeGo(r.Credential, r.BaseURL)
+	case "minimax":
+		return provider.NewMinimaxAnthropic(r.Credential, r.BaseURL)
+	case "minimax-cn":
+		return provider.NewMinimaxCNAnthropic(r.Credential, r.BaseURL)
+	case "fireworks":
+		return provider.NewFireworksAnthropic(r.Credential, r.BaseURL)
+	case "vercel-ai-gateway":
+		return provider.NewVercelGatewayAnthropic(r.Credential, r.BaseURL)
+	case "mistral":
+		return provider.NewMistral(r.Credential, r.BaseURL)
+	case "amazon-bedrock":
+		return provider.NewBedrock(r.Credential, r.BaseURL)
+	case "google-vertex":
+		return provider.NewGoogleVertex(r.Credential, r.BaseURL)
+	case "azure-openai-responses":
+		return provider.NewAzureOpenAIResponses(r.Credential, r.BaseURL)
+	case "github-copilot":
+		return provider.NewGithubCopilot(r.Credential, r.BaseURL)
+	case "cloudflare-workers-ai":
+		return provider.NewCloudflareWorkersAI(r.Credential, r.BaseURL)
+	case "cloudflare-ai-gateway":
+		return provider.NewCloudflareAIGateway(r.Credential, r.BaseURL)
 	default:
 		if r.AuthMethod == "oauth" {
 			inner := provider.NewAnthropicOAuth(r.Credential, r.BaseURL)
@@ -571,7 +670,8 @@ func (r Resolved) wrapWithRefresh(inner provider.Client) provider.Client {
 		case "openai-codex":
 			return provider.NewOpenAICodex(token, accountID, baseURL)
 		case "kimi":
-			return provider.NewKimiWithHeaders(token, baseURL, kimiCodeHeaders())
+			// anthropic-messages on api.kimi.com/coding.
+			return provider.NewKimiCodingWithHeaders(token, baseURL, kimiCodeHeaders())
 		default:
 			return provider.NewAnthropicOAuth(token, baseURL)
 		}
@@ -683,7 +783,7 @@ func kimiCodeHeaders() map[string]string {
 
 func envVarName(provider string) string {
 	switch provider {
-	case "openai", "openai-codex":
+	case "openai", "openai-codex", "openai-responses":
 		return "OPENAI"
 	case "kimi":
 		return "KIMI"
@@ -693,6 +793,52 @@ func envVarName(provider string) string {
 		return "GEMINI"
 	case "ollama":
 		return "OLLAMA"
+	case "moonshotai", "moonshotai-cn":
+		return "MOONSHOT"
+	case "groq":
+		return "GROQ"
+	case "xai":
+		return "XAI"
+	case "cerebras":
+		return "CEREBRAS"
+	case "together":
+		return "TOGETHER"
+	case "huggingface":
+		return "HF"
+	case "openrouter":
+		return "OPENROUTER"
+	case "mistral":
+		return "MISTRAL"
+	case "zai":
+		return "ZAI"
+	case "xiaomi":
+		return "XIAOMI"
+	case "xiaomi-token-plan-ams":
+		return "XIAOMI_TOKEN_PLAN_AMS"
+	case "xiaomi-token-plan-cn":
+		return "XIAOMI_TOKEN_PLAN_CN"
+	case "xiaomi-token-plan-sgp":
+		return "XIAOMI_TOKEN_PLAN_SGP"
+	case "minimax":
+		return "MINIMAX"
+	case "minimax-cn":
+		return "MINIMAX_CN"
+	case "fireworks":
+		return "FIREWORKS"
+	case "vercel-ai-gateway":
+		return "AI_GATEWAY"
+	case "opencode", "opencode-go":
+		return "OPENCODE"
+	case "github-copilot":
+		return "COPILOT_GITHUB_TOKEN"
+	case "cloudflare-workers-ai", "cloudflare-ai-gateway":
+		return "CLOUDFLARE"
+	case "amazon-bedrock":
+		return "AWS"
+	case "google-vertex":
+		return "GOOGLE_CLOUD"
+	case "azure-openai-responses":
+		return "AZURE_OPENAI"
 	default:
 		return "ANTHROPIC"
 	}

@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -33,9 +35,71 @@ func LoadCachedModels() {
 
 // LoadUserModels reads $ZOT_HOME/models.json and merges any user-defined
 // models into the active catalog. User models take highest precedence.
+// Any validation issues (bad provider id, empty model id, malformed
+// JSON, negative widths) are surfaced as one warning per line on stderr;
+// the well-formed entries from the rest of the file are still loaded.
 func LoadUserModels() {
-	models := provider.LoadUserModels(UserModelsPath())
+	models, warnings := provider.LoadUserModelsWithWarnings(UserModelsPath())
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, "zot:", w)
+	}
 	provider.SetUserModels(models)
+}
+
+// ValidateAndRepairConfig checks the persisted config.json's
+// (Provider, Model) pair against the active catalog and repairs any
+// mismatch in-place (and on disk) before any UI renders. Three failure
+// modes are handled:
+//
+//   - cfg.Provider is empty or unknown -> reset to "anthropic".
+//   - cfg.Model is empty -> set to the provider's default.
+//   - cfg.Model belongs to a different provider than cfg.Provider
+//     (e.g. provider=anthropic + model=kimi-for-coding from a stale
+//     half-applied switch) -> reset model to the provider's default.
+//
+// Silent on success; one stderr line per repair. Errors loading or
+// saving the file are non-fatal — the caller continues with defaults.
+func ValidateAndRepairConfig() {
+	cfg, err := LoadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zot: config.json: %v (using defaults)\n", err)
+		return
+	}
+	changed := false
+
+	if cfg.Provider != "" && !isKnownProvider(cfg.Provider) {
+		fmt.Fprintf(os.Stderr, "zot: config.json: unknown provider %q reset to \"anthropic\"\n", cfg.Provider)
+		cfg.Provider = "anthropic"
+		cfg.Model = ""
+		changed = true
+	}
+
+	if cfg.Provider != "" && cfg.Model != "" {
+		if m, err := provider.FindModel("", cfg.Model); err == nil {
+			if m.Provider != cfg.Provider {
+				fix := defaultModelForProvider(cfg.Provider)
+				fmt.Fprintf(os.Stderr,
+					"zot: config.json: model %q belongs to provider %q (config has provider=%q); switched model to %q\n",
+					cfg.Model, m.Provider, cfg.Provider, fix)
+				cfg.Model = fix
+				changed = true
+			}
+		} else if cfg.Provider != "ollama" {
+			// Model id not in any catalog. Reset to provider's default.
+			fix := defaultModelForProvider(cfg.Provider)
+			fmt.Fprintf(os.Stderr,
+				"zot: config.json: model %q not found in the active catalog; switched to %q\n",
+				cfg.Model, fix)
+			cfg.Model = fix
+			changed = true
+		}
+	}
+
+	if changed {
+		if err := SaveConfig(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "zot: config.json: failed to persist repair: %v\n", err)
+		}
+	}
 }
 
 // RefreshModelsAsync kicks a background discovery for every provider

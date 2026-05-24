@@ -160,14 +160,33 @@ func forEachJSONLLine(r io.Reader, fn func([]byte) error) error {
 // latest row's cumulative field is the session total. Missing usage rows
 // are valid for old/empty sessions and return the zero value.
 func SessionUsage(path string) (provider.Usage, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return provider.Usage{}, err
+	cum, _, err := SessionUsageDetail(path)
+	return cum, err
+}
+
+// SessionUsageDetail returns the latest cumulative usage and the
+// per-turn usage of the final completed turn. The per-turn row drives
+// the live "context used" gauge in the status bar (input + cache
+// approximates the prompt size the model just saw), letting the TUI
+// rehydrate the gauge on resume instead of starting at 0% until the
+// next turn lands.
+func SessionUsageDetail(path string) (cumulative, lastTurn provider.Usage, err error) {
+	f, ferr := os.Open(path)
+	if ferr != nil {
+		return provider.Usage{}, provider.Usage{}, ferr
 	}
 	defer f.Close()
 
-	var usage provider.Usage
-	if err := forEachJSONLLine(f, func(line []byte) error {
+	// Some historical sessions logged the per-turn `usage` field as a copy
+	// of `cumulative` instead of the true delta. To recover an accurate
+	// last-turn snapshot (used by the status-bar context gauge on resume),
+	// we always derive lastTurn from the delta between the final two
+	// cumulative rows. For prompt-size purposes, cache_read/cache_write
+	// reflect the most recent prompt directly, so we take those from the
+	// final cumulative row as-is rather than as a delta.
+	var prevCum provider.Usage
+	var haveCum bool
+	if ierr := forEachJSONLLine(f, func(line []byte) error {
 		var head sessionLineHead
 		if err := json.Unmarshal(line, &head); err != nil || head.Type != "usage" {
 			return nil
@@ -175,14 +194,45 @@ func SessionUsage(path string) (provider.Usage, error) {
 		var row struct {
 			Cumulative provider.Usage `json:"cumulative"`
 		}
-		if err := json.Unmarshal(line, &row); err == nil {
-			usage = row.Cumulative
+		if err := json.Unmarshal(line, &row); err != nil {
+			return nil
 		}
+		if haveCum {
+			prevCum = cumulative
+		}
+		cumulative = row.Cumulative
+		haveCum = true
 		return nil
-	}); err != nil {
-		return provider.Usage{}, err
+	}); ierr != nil {
+		return provider.Usage{}, provider.Usage{}, ierr
 	}
-	return usage, nil
+	if haveCum {
+		// input/output are monotonic totals -> per-turn = delta.
+		lastTurn.InputTokens = nonNegDelta(cumulative.InputTokens, prevCum.InputTokens)
+		lastTurn.OutputTokens = nonNegDelta(cumulative.OutputTokens, prevCum.OutputTokens)
+		// cache_read/write on the final row already represent the last prompt's
+		// cache hit/creation, not a running total of bytes; use directly.
+		lastTurn.CacheReadTokens = cumulative.CacheReadTokens - prevCum.CacheReadTokens
+		if lastTurn.CacheReadTokens < 0 {
+			lastTurn.CacheReadTokens = cumulative.CacheReadTokens
+		}
+		lastTurn.CacheWriteTokens = cumulative.CacheWriteTokens - prevCum.CacheWriteTokens
+		if lastTurn.CacheWriteTokens < 0 {
+			lastTurn.CacheWriteTokens = cumulative.CacheWriteTokens
+		}
+		lastTurn.CostUSD = cumulative.CostUSD - prevCum.CostUSD
+		if lastTurn.CostUSD < 0 {
+			lastTurn.CostUSD = 0
+		}
+	}
+	return cumulative, lastTurn, nil
+}
+
+func nonNegDelta(cur, prev int) int {
+	if cur < prev {
+		return cur
+	}
+	return cur - prev
 }
 
 // OpenSession opens an existing session for appending.

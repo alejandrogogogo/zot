@@ -134,6 +134,12 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 	}
 	switch provider {
 	case "anthropic":
+		// ANTHROPIC_OAUTH_TOKEN takes precedence over ANTHROPIC_API_KEY.
+		// Useful when both are set and the user wants subscription auth
+		// without editing auth.json.
+		if v := os.Getenv("ANTHROPIC_OAUTH_TOKEN"); v != "" {
+			return v, "oauth", "", nil
+		}
 		if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
 			return v, "apikey", "", nil
 		}
@@ -145,6 +151,12 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 		// ChatGPT/Codex subscription route. It intentionally ignores
 		// OPENAI_API_KEY so users can keep both OpenAI API and Codex
 		// subscription credentials configured and choose by provider.
+	case "openai-responses":
+		// Public OpenAI Responses API. Same env var as the chat-completions
+		// `openai` provider; users pick the wire format by provider id.
+		if v := os.Getenv("OPENAI_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
 	case "kimi":
 		if v := os.Getenv("KIMI_API_KEY"); v != "" {
 			return v, "apikey", "", nil
@@ -164,6 +176,105 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 		}
 	case "deepseek":
 		if v := os.Getenv("DEEPSEEK_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "moonshotai", "moonshotai-cn":
+		// Moonshot direct API (separate from kimi-coding, which is the
+		// Anthropic-Messages-fronted /coding endpoint with subscription OAuth).
+		if v := os.Getenv("MOONSHOT_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "groq":
+		if v := os.Getenv("GROQ_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "xai":
+		if v := os.Getenv("XAI_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "cerebras":
+		if v := os.Getenv("CEREBRAS_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "together":
+		if v := os.Getenv("TOGETHER_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "huggingface":
+		if v := os.Getenv("HF_TOKEN"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "openrouter":
+		if v := os.Getenv("OPENROUTER_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "mistral":
+		if v := os.Getenv("MISTRAL_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "zai":
+		if v := os.Getenv("ZAI_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "xiaomi", "xiaomi-token-plan-ams", "xiaomi-token-plan-cn", "xiaomi-token-plan-sgp":
+		envVar := "XIAOMI_API_KEY"
+		switch provider {
+		case "xiaomi-token-plan-ams":
+			envVar = "XIAOMI_TOKEN_PLAN_AMS_API_KEY"
+		case "xiaomi-token-plan-cn":
+			envVar = "XIAOMI_TOKEN_PLAN_CN_API_KEY"
+		case "xiaomi-token-plan-sgp":
+			envVar = "XIAOMI_TOKEN_PLAN_SGP_API_KEY"
+		}
+		if v := os.Getenv(envVar); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "minimax":
+		if v := os.Getenv("MINIMAX_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "minimax-cn":
+		if v := os.Getenv("MINIMAX_CN_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+		if v := os.Getenv("MINIMAX_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "fireworks":
+		if v := os.Getenv("FIREWORKS_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "vercel-ai-gateway":
+		if v := os.Getenv("AI_GATEWAY_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "opencode", "opencode-go":
+		if v := os.Getenv("OPENCODE_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "github-copilot":
+		if v := os.Getenv("COPILOT_GITHUB_TOKEN"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "cloudflare-workers-ai", "cloudflare-ai-gateway":
+		if v := os.Getenv("CLOUDFLARE_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "amazon-bedrock":
+		// Bedrock has many credential sources (AWS_PROFILE, IAM keys,
+		// container creds, IRSA, bearer token). We surface a sentinel so
+		// Resolve doesn't error on missing key; the real client (when
+		// implemented) will resolve credentials through aws-sdk-go-v2.
+		if os.Getenv("AWS_ACCESS_KEY_ID") != "" || os.Getenv("AWS_PROFILE") != "" ||
+			os.Getenv("AWS_BEARER_TOKEN_BEDROCK") != "" {
+			return "<aws>", "apikey", "", nil
+		}
+	case "google-vertex":
+		if v := os.Getenv("GOOGLE_CLOUD_API_KEY"); v != "" {
+			return v, "apikey", "", nil
+		}
+	case "azure-openai-responses":
+		if v := os.Getenv("AZURE_OPENAI_API_KEY"); v != "" {
 			return v, "apikey", "", nil
 		}
 	}

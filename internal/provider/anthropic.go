@@ -60,6 +60,15 @@ type anthropicClient struct {
 	baseURL  string
 	oauthTok string // when non-empty, send Bearer auth instead of x-api-key
 	http     *http.Client
+
+	// name overrides the default "anthropic" identity. Anthropic-Messages-
+	// compatible third-party endpoints (kimi-coding, fireworks, minimax,
+	// vercel-ai-gateway, etc.) set this so cost lookup / logging / image-
+	// stripping logic can route on a stable provider id.
+	name string
+
+	// headers carries extra request headers (e.g. Kimi Code's X-Msh-*).
+	headers map[string]string
 }
 
 // NewAnthropic creates an Anthropic client using an API key. baseURL may be empty.
@@ -86,7 +95,12 @@ func NewAnthropicOAuth(accessToken, baseURL string) Client {
 	}
 }
 
-func (c *anthropicClient) Name() string { return "anthropic" }
+func (c *anthropicClient) Name() string {
+	if c.name != "" {
+		return c.name
+	}
+	return "anthropic"
+}
 
 // ---- wire types ----
 
@@ -166,7 +180,18 @@ type anthRequest struct {
 // ---- request building ----
 
 func (c *anthropicClient) buildRequest(req Request) (*anthRequest, error) {
-	m, err := FindModel("anthropic", req.Model)
+	// Look up under the client's actual provider id, which may be "anthropic"
+	// (default) or a third party that speaks the Anthropic Messages API
+	// (kimi, fireworks, minimax, vercel-ai-gateway, ...). Falling back to a
+	// provider-agnostic lookup keeps things working for catalog-less
+	// configurations (e.g. user passes --model on an obscure third party).
+	m, err := FindModel(c.Name(), req.Model)
+	if err != nil {
+		if m2, err2 := FindModel("", req.Model); err2 == nil {
+			m = m2
+			err = nil
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +275,11 @@ func (c *anthropicClient) buildRequest(req Request) (*anthRequest, error) {
 
 	// Convert messages. Anthropic's wire format has only "user" and
 	// "assistant" roles; tool_result blocks live inside user messages.
+	// Some image-capable providers (for example Gemini image generation)
+	// can emit assistant image blocks. Anthropic only accepts image blocks
+	// in user messages, so strip assistant-side images when switching
+	// providers mid-session. The saved-path TextBlock emitted beside the
+	// image keeps the artifact reachable in chat.
 	//
 	// CRITICAL: tool_result blocks go into their OWN new user
 	// message, they are NOT merged into the preceding user message.
@@ -279,7 +309,7 @@ func (c *anthropicClient) buildRequest(req Request) (*anthRequest, error) {
 		case RoleAssistant:
 			out.Messages = append(out.Messages, anthMessage{
 				Role:    "assistant",
-				Content: convertAnthContent(msg.Content, renameTools),
+				Content: convertAnthContent(filterAnthAssistantContent(msg.Content), renameTools),
 			})
 		}
 	}
@@ -341,6 +371,17 @@ func anthropicReasoningBudget(level string) int {
 	default:
 		return 0
 	}
+}
+
+func filterAnthAssistantContent(blocks []Content) []Content {
+	filtered := make([]Content, 0, len(blocks))
+	for _, b := range blocks {
+		if _, ok := b.(ImageBlock); ok {
+			continue
+		}
+		filtered = append(filtered, b)
+	}
+	return filtered
 }
 
 func convertAnthContent(blocks []Content, renameTools bool) []interface{} {
@@ -475,6 +516,12 @@ func (c *anthropicClient) Stream(ctx context.Context, req Request) (<-chan Event
 			httpReq.Header.Set("accept", "text/event-stream")
 			httpReq.Header.Set("x-api-key", c.apiKey)
 		}
+		// Extra headers (set by anthropic-messages-compatible third parties
+		// — kimi-coding's X-Msh-*, copilot's Editor-Plugin-Version, etc.).
+		// Applied last so callers can override defaults if they really need to.
+		for k, v := range c.headers {
+			httpReq.Header.Set(k, v)
+		}
 		return httpReq, nil
 	}
 
@@ -497,8 +544,13 @@ func (c *anthropicClient) runStream(ctx context.Context, resp *http.Response, re
 	defer close(out)
 	defer resp.Body.Close()
 
-	model, _ := FindModel("anthropic", req.Model)
-	out <- EventStart{Model: req.Model, Provider: "anthropic"}
+	// Same lookup-by-actual-provider-id pattern as buildRequest, so cost
+	// calculation works for third-party Anthropic-Messages endpoints.
+	model, _ := FindModel(c.Name(), req.Model)
+	if model.ID == "" {
+		model, _ = FindModel("", req.Model)
+	}
+	out <- EventStart{Model: req.Model, Provider: c.Name()}
 
 	raw := make(chan sseEvent, 16)
 	go readSSE(resp.Body, raw)

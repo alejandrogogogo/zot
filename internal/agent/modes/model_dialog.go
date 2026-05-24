@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/patriceckhart/zot/internal/provider"
 	"github.com/patriceckhart/zot/internal/tui"
 )
@@ -22,6 +23,13 @@ type modelDialog struct {
 	cursor  int
 	current string // currently selected model id (highlighted)
 	query   string // live filter text typed by the user
+
+	// Column widths are computed once on Open() across the entire
+	// catalog so the layout stays stable while the user scrolls or
+	// filters. Recomputing per visible window would make the columns
+	// jitter left/right whenever rows entered or left the 14-row band.
+	provW int
+	idW   int
 }
 
 // modelDialogAction is returned by HandleKey.
@@ -57,6 +65,7 @@ func (d *modelDialog) Open(current string, loggedInProviders []string) {
 	d.all = sortedModels(all)
 	d.current = current
 	d.query = ""
+	d.provW, d.idW = columnWidths(d.all)
 	d.refilter()
 }
 
@@ -159,15 +168,17 @@ func (d *modelDialog) Render(th tui.Theme, width int) []string {
 		end = start + visible
 	}
 
+	// Column widths were computed once on Open() across the full catalog
+	// (d.provW / d.idW). Reusing them keeps the layout rock-stable while
+	// scrolling and filtering — recomputing per visible window made the
+	// columns visibly jitter.
+	provW, idW := d.provW, d.idW
 	for i := start; i < end; i++ {
 		m := d.view[i]
-		prov := m.Provider
-		id := m.ID
 		reason := " "
 		if m.Reasoning {
 			reason = "✦"
 		}
-		name := m.DisplayName
 		tag := ""
 		switch {
 		case m.Speculative:
@@ -179,7 +190,11 @@ func (d *modelDialog) Render(th tui.Theme, width int) []string {
 		if m.ID == d.current {
 			curMark = "● "
 		}
-		plain := fmt.Sprintf(" %s%-10s %-28s %s  %s%s", curMark, prov, id, reason, tag, name)
+		plain := fmt.Sprintf(" %s%s   %s %s  %s%s",
+			curMark,
+			padRight(m.Provider, provW),
+			padRight(m.ID, idW),
+			reason, tag, m.DisplayName)
 		if i == d.cursor {
 			lines = append(lines, th.PadHighlight(plain, width))
 		} else {
@@ -196,6 +211,37 @@ func (d *modelDialog) Render(th tui.Theme, width int) []string {
 
 	lines = append(lines, frameRule(th, width))
 	return lines
+}
+
+// columnWidths returns the display-cell width of the longest provider
+// name and the longest model id in rows. Each column is clamped to a
+// minimum so a single-row filter still renders sensibly.
+func columnWidths(rows []provider.Model) (provW, idW int) {
+	const minProv, minID = 6, 12
+	provW, idW = minProv, minID
+	for _, m := range rows {
+		if w := runewidth.StringWidth(m.Provider); w > provW {
+			provW = w
+		}
+		if w := runewidth.StringWidth(m.ID); w > idW {
+			idW = w
+		}
+	}
+	return
+}
+
+// padRight returns s padded with spaces on the right so its display
+// width equals w. Truncates with an ellipsis when s is too wide to
+// avoid blowing out the column.
+func padRight(s string, w int) string {
+	cw := runewidth.StringWidth(s)
+	if cw == w {
+		return s
+	}
+	if cw < w {
+		return s + strings.Repeat(" ", w-cw)
+	}
+	return runewidth.Truncate(s, w, "…")
 }
 
 // HandleKey advances the dialog and returns an action to apply, if any.

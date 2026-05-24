@@ -140,6 +140,15 @@ type View struct {
 	// Streaming/in-flight work (v.Streaming, v.ToolCalls) is never
 	// cached because it changes every delta.
 	renderCache map[msgCacheKey][]string
+
+	// TailLimit caps how many messages from the END of Messages are
+	// rendered. Messages older than the limit emit a zero-row slice
+	// so first paint after a session resume doesn't pay the markdown
+	// / chroma cost for the entire transcript at once. 0 means no
+	// limit (render everything, the historical behaviour). Interactive
+	// raises the cap when the user scrolls past the top of the
+	// already-rendered tail.
+	TailLimit int
 }
 
 // msgCacheKey identifies a cached message render. hash is a 64-bit
@@ -280,7 +289,19 @@ func (v *View) BuildWithAnchors(width int) ([]string, []MessageAnchor) {
 	// to visibly stutter while typing.
 	rendered := make([][]string, len(v.Messages))
 	total := 0
+	// renderFrom is the first index we actually render. Anything
+	// below it emits a zero-row placeholder; the message still gets
+	// an anchor entry so /jump and scroll math keep working, and a
+	// later Build with a higher TailLimit fills the gap.
+	renderFrom := 0
+	if v.TailLimit > 0 && len(v.Messages) > v.TailLimit {
+		renderFrom = len(v.Messages) - v.TailLimit
+	}
 	for idx, m := range v.Messages {
+		if idx < renderFrom {
+			rendered[idx] = nil
+			continue
+		}
 		// A turn is "open" once the assistant has started responding
 		// to the most recent user prompt. Walk back over consecutive
 		// assistant/tool messages: if any non-user message precedes
