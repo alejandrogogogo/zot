@@ -30,6 +30,12 @@ type SwarmSpawnTool struct {
 	// /settings without rebuilding the agent. When nil, the tool
 	// is treated as disabled.
 	Enabled func() bool
+
+	// OnSpawned, if set, is called after every successful spawn with
+	// the new agent + the task it was started with. Used by the
+	// interactive host to track agents and surface a summary back
+	// in the main chat once they all finish.
+	OnSpawned func(agent *swarm.Agent, task string)
 }
 
 type swarmSpawnArgs struct {
@@ -86,6 +92,9 @@ func (t *SwarmSpawnTool) Execute(ctx context.Context, raw json.RawMessage, progr
 	})
 	if err != nil {
 		return core.ToolResult{}, fmt.Errorf("swarm_spawn: %w", err)
+	}
+	if t.OnSpawned != nil {
+		t.OnSpawned(agent, task)
 	}
 
 	var sb strings.Builder

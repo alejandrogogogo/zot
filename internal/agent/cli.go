@@ -441,6 +441,17 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 	// shows them as detached and the user can resume / remove them.
 	_, _ = swarmMgr.Reload()
 
+	// onSpawnedSwarm is the OnSpawned callback the swarm_spawn tool
+	// fires after every successful spawn. It hands the agent off to
+	// the running Interactive so the watcher can flush a summary back
+	// into chat when all sub-agents finish. Reads `iv` lazily because
+	// the Interactive is constructed after the agent.
+	onSpawnedSwarm := func(a *swarm.Agent, task string) {
+		if iv != nil {
+			iv.TrackSwarmAgent(a, task)
+		}
+	}
+
 	// Inject the swarm_spawn auto-swarm tool only when /settings ->
 	// auto-swarm is currently enabled. Registering it unconditionally
 	// leaves the model trying to call it (and getting a polite error)
@@ -455,8 +466,9 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 			return reg
 		}
 		reg["swarm_spawn"] = &tools.SwarmSpawnTool{
-			Swarm:   swarmMgr,
-			Enabled: AutoSwarmEnabled,
+			Swarm:     swarmMgr,
+			Enabled:   AutoSwarmEnabled,
+			OnSpawned: onSpawnedSwarm,
 		}
 		return reg
 	}
