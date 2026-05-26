@@ -196,8 +196,17 @@ func (d *swarmDialog) CursorPos(width int) (row, col int) {
 			popupRows = len(d.fileSuggest.Render(d.newTaskEd.Value(), tui.Theme{}, width))
 		}
 		_, eRow, eCol := d.newTaskEd.Render(width - 2)
+		const headerRows = 1
 		const editorBlankRow = 1
-		return 1 + modelBannerRows + popupRows + editorBlankRow + eRow, eCol + 2
+		padAfterHeaderRows := 0
+		if modelBannerRows > 0 {
+			// interactive.Render wraps dialog output with padDialogFrame,
+			// which inserts a blank row after the frame header when the
+			// first body row is non-empty. The model banner is that first
+			// body row in the spawn editor, so mirror the extra row here.
+			padAfterHeaderRows = 1
+		}
+		return headerRows + padAfterHeaderRows + modelBannerRows + popupRows + editorBlankRow + eRow, eCol + 2
 	}
 	// Prompt editor cursor placement. Two flavours:
 	//   1. List-view modal (`p` from the dashboard list): renderPromptEditor
@@ -220,12 +229,14 @@ func (d *swarmDialog) CursorPos(width int) (row, col int) {
 			return d.transcriptEditorCursorRow(width, popupRows, eRow), eCol + 2
 		}
 
-		// List-view modal layout: frame header + "send to <id>:" hint
-		// + popup + blank + editor.
+		// List-view modal layout after interactive.Render applies
+		// padDialogFrame: frame header + inserted pad row + "send to
+		// <id>:" hint + popup + blank + editor.
 		const headerRows = 1
+		const padAfterHeaderRows = 1
 		const sendToHintRow = 1
 		const editorBlankRow = 1
-		return headerRows + sendToHintRow + popupRows + editorBlankRow + eRow, eCol + 2
+		return headerRows + padAfterHeaderRows + sendToHintRow + popupRows + editorBlankRow + eRow, eCol + 2
 	}
 	return -1, -1
 }
@@ -240,6 +251,7 @@ func (d *swarmDialog) transcriptEditorCursorRow(width, popupRows, editorRowOffse
 		return -1
 	}
 	row := 1 // frame header
+	row++    // padDialogFrame blank row after header (next row is task metadata)
 	row += 3 // task / dir / status (mirrors renderTranscript's fixed header rows)
 	if a.Model != "" {
 		row++
