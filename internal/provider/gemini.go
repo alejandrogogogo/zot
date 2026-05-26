@@ -157,10 +157,7 @@ func (c *geminiClient) buildRequest(req Request) (*gemRequest, string, error) {
 	if functionsEnabled && len(req.Tools) > 0 {
 		decls := make([]gemFunctionDecl, 0, len(req.Tools))
 		for _, t := range req.Tools {
-			schema := t.Schema
-			if len(schema) == 0 || !json.Valid(schema) {
-				schema = json.RawMessage(`{"type":"object","properties":{}}`)
-			}
+			schema := sanitizeGeminiToolSchema(t.Schema)
 			decls = append(decls, gemFunctionDecl{
 				Name:        t.Name,
 				Description: t.Description,
@@ -224,6 +221,46 @@ func (c *geminiClient) buildRequest(req Request) (*gemRequest, string, error) {
 	}
 
 	return out, m.ID, nil
+}
+
+func sanitizeGeminiToolSchema(schema json.RawMessage) json.RawMessage {
+	if len(schema) == 0 || !json.Valid(schema) {
+		return json.RawMessage(`{"type":"object","properties":{}}`)
+	}
+	var v any
+	if err := json.Unmarshal(schema, &v); err != nil {
+		return json.RawMessage(`{"type":"object","properties":{}}`)
+	}
+	v = stripGeminiUnsupportedSchemaFields(v)
+	out, err := json.Marshal(v)
+	if err != nil || len(out) == 0 || !json.Valid(out) {
+		return json.RawMessage(`{"type":"object","properties":{}}`)
+	}
+	return out
+}
+
+func stripGeminiUnsupportedSchemaFields(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, val := range x {
+			switch k {
+			case "additionalProperties", "$schema":
+				continue
+			default:
+				out[k] = stripGeminiUnsupportedSchemaFields(val)
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, val := range x {
+			out[i] = stripGeminiUnsupportedSchemaFields(val)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func convertGemUserParts(blocks []Content) []gemPart {
