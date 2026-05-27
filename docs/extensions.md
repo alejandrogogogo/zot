@@ -478,34 +478,34 @@ the extension dies with zot like any other subprocess.
 Writing the wire protocol by hand is fine for one-off scripts, but
 for anything bigger the SDKs handle the boilerplate.
 
-### Go — `pkg/zotext`
+### Go — `packages/agent/ext`
 
 ```go
 package main
 
 import (
     "encoding/json"
-    "github.com/patriceckhart/zot/pkg/zotext"
+    "github.com/patriceckhart/zot/packages/agent/ext"
 )
 
 func main() {
-    ext := zotext.New("hello", "1.0.0")
+    e := ext.New("hello", "1.0.0")
 
     // Slash command
-    ext.Command("hello", "say hi", func(args string) zotext.Response {
-        return zotext.Prompt("Greet me in one short sentence.")
+    e.Command("hello", "say hi", func(args string) ext.Response {
+        return ext.Prompt("Greet me in one short sentence.")
     })
 
     // LLM-callable tool
-    ext.Tool("weather", "Current weather for a city.",
+    e.Tool("weather", "Current weather for a city.",
         json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`),
-        func(args json.RawMessage) zotext.ToolResult {
+        func(args json.RawMessage) ext.ToolResult {
             var in struct{ City string `json:"city"` }
             json.Unmarshal(args, &in)
-            return zotext.TextResult(in.City + ": sunny")
+            return ext.TextResult(in.City + ": sunny")
         })
 
-    ext.Run()
+    e.Run()
 }
 ```
 
@@ -515,29 +515,31 @@ into `$ZOT_HOME/extensions/hello/`.
 The SDK has four interceptor hooks, all optional:
 
 ```go
+// e is the *ext.Extension returned by ext.New(...).
+
 // Refuse calls or rewrite args before they run.
-ext.InterceptToolCall(func(tool string, args json.RawMessage) (bool, string) {
+e.InterceptToolCall(func(tool string, args json.RawMessage) (bool, string) {
     if tool == "bash" { /* inspect args, return false, reason */ }
     return true, ""
 })
 
 // Richer variant: returns ToolCallDecision so you can also rewrite
 // args via ModifiedArgs.
-ext.InterceptToolCallX(func(tool string, args json.RawMessage) zotext.ToolCallDecision {
-    return zotext.ToolCallDecision{
+e.InterceptToolCallX(func(tool string, args json.RawMessage) ext.ToolCallDecision {
+    return ext.ToolCallDecision{
         ModifiedArgs: json.RawMessage(`{"command":"echo GUARDED"}`),
     }
 })
 
 // Block the next turn before the model is called.
-ext.InterceptTurnStart(func(step int) zotext.TurnStartDecision {
-    if time.Now().Hour() < 9 { return zotext.TurnStartDecision{Block: true, Reason: "outside business hours"} }
-    return zotext.TurnStartDecision{}
+e.InterceptTurnStart(func(step int) ext.TurnStartDecision {
+    if time.Now().Hour() < 9 { return ext.TurnStartDecision{Block: true, Reason: "outside business hours"} }
+    return ext.TurnStartDecision{}
 })
 
 // Scrub or rewrite the assistant's final text before the user sees it.
-ext.InterceptAssistantMessage(func(text string) zotext.AssistantMessageDecision {
-    return zotext.AssistantMessageDecision{
+e.InterceptAssistantMessage(func(text string) ext.AssistantMessageDecision {
+    return ext.AssistantMessageDecision{
         ReplaceText: strings.ReplaceAll(text, "SECRET", "[redacted]"),
     }
 })

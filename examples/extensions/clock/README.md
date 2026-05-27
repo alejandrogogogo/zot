@@ -49,5 +49,5 @@ points at and reads/writes JSON lines on its stdio.
 
 ## See also
 
-- `examples/extensions/hello` — Go version using the `pkg/zotext` SDK
+- `examples/extensions/hello` — Go version using the `packages/agent/ext` SDK
 - `docs/extensions.md` — full protocol reference

@@ -13,29 +13,29 @@ package main
 import (
 	"strings"
 
-	"github.com/patriceckhart/zot/pkg/zotext"
+	"github.com/patriceckhart/zot/packages/agent/ext"
 )
 
 func main() {
-	ext := zotext.New("hello", "1.0.0")
+	e := ext.New("hello", "1.0.0")
 
 	// /hello [name] — submits a friendly prompt to the agent.
-	ext.Command("hello", "say hello (optional name)", func(args string) zotext.Response {
+	e.Command("hello", "say hello (optional name)", func(args string) ext.Response {
 		who := strings.TrimSpace(args)
 		if who == "" {
-			return zotext.Prompt("Greet me with a short, slightly absurd compliment.")
+			return ext.Prompt("Greet me with a short, slightly absurd compliment.")
 		}
-		return zotext.Prompt("Greet " + who + " with a short, slightly absurd compliment.")
+		return ext.Prompt("Greet " + who + " with a short, slightly absurd compliment.")
 	})
 
 	// /summon — pushes a notice into the chat without involving the
 	// model. Useful for pretending we did something important.
-	ext.Command("summon", "show a tongue-in-cheek summon notice", func(args string) zotext.Response {
-		ext.Notify("info", "the daemon stirs in its cage.")
-		return zotext.Display("a wisp of incense curls past your terminal.")
+	e.Command("summon", "show a tongue-in-cheek summon notice", func(args string) ext.Response {
+		e.Notify("info", "the daemon stirs in its cage.")
+		return ext.Display("a wisp of incense curls past your terminal.")
 	})
 
-	if err := ext.Run(); err != nil {
-		ext.Logf("fatal: %v", err)
+	if err := e.Run(); err != nil {
+		e.Logf("fatal: %v", err)
 	}
 }

@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://www.zot.sh">
-    <img src="internal/assets/zot-logo.png" alt="zot coding agent harness" width="130" height="130" />
+    <img src="packages/provider/auth/assets/zot-logo.png" alt="zot coding agent harness" width="130" height="130" />
   </a>
 </div>
 <p align="center">
@@ -175,7 +175,7 @@ When the sandbox is on (see `/jail`), all four tools refuse paths outside the se
 
 Two ways to drive zot from another program:
 
-- **Go in-process**: import `github.com/patriceckhart/zot/pkg/zotcore`. One `Runtime` per project; `Prompt(ctx, text, images)` returns a channel of `Event`. Small example in `examples/sdk/`.
+- **Go in-process**: import `github.com/patriceckhart/zot/packages/agent/sdk`. One `Runtime` per project; `Prompt(ctx, text, images)` returns a channel of `Event`. Small example in `examples/sdk/`.
 - **Any language, out-of-process**: spawn `zot rpc` as a subprocess and exchange newline-delimited JSON over its stdin/stdout. Wire format and event schema in [docs/rpc.md](docs/rpc.md). Reference clients live under `examples/rpc/`.
 
 Both interfaces share the same event schema, so transcripts captured by one can be replayed through the other.
@@ -197,7 +197,7 @@ Type `/` in the TUI to open the autocomplete popup. Available commands:
 | `/swarm` | Spawn, monitor, and chat with background subagents. Each runs in parallel with your main session and shares its working directory. |
 | `/skills` | List discovered skills (SKILL.md files) and preview their bodies. |
 | `/compact` | Summarize the transcript into one message to free up context. |
-| `/study` | Run the canned prompt "Read and understand everything in the current directory." so the agent has full project context before you start asking targeted questions. Pass a path — typed, drag-dropped, or selected via `@` — to target a specific file or directory instead: `/study [dir:internal/]`, `/study cmd/zot/main.go`. |
+| `/study` | Run the canned prompt "Read and understand everything in the current directory." so the agent has full project context before you start asking targeted questions. Pass a path — typed, drag-dropped, or selected via `@` — to target a specific file or directory instead: `/study [dir:packages/]`, `/study cmd/zot/main.go`. |
 | `/jail` | Confine tools to the current directory. |
 | `/unjail` | Allow tools to touch paths outside again. |
 | `/reload-ext` | Hot-reload all extensions (re-read manifests, respawn subprocesses, rebuild tool registry). |
@@ -600,7 +600,7 @@ For development, point `zot --ext <path>` at a working directory and skip the in
 
 ### Reference
 
-`examples/extensions/` ships reference implementations in Go, TypeScript, Node, and shell. See [docs/extensions.md](docs/extensions.md) for the full protocol, the SDK API (`pkg/zotext`), and the phase roadmap.
+`examples/extensions/` ships reference implementations in Go, TypeScript, Node, and shell. See [docs/extensions.md](docs/extensions.md) for the full protocol, the SDK API (`packages/agent/ext`), and the phase roadmap.
 
 ## Skills
 
@@ -671,23 +671,27 @@ make fmt       # gofmt -w .
 make release   # cross-compile linux/darwin/windows on amd64 and arm64
 ```
 
-Source layout:
+Source layout (single Go module, four packages under `packages/`):
 
 ```
-cmd/zot/                      main()
-internal/agent/               cli wiring, arg parsing, system prompt, config
-internal/agent/extensions/    extension subprocess manager
-internal/agent/modes/         interactive tui, print, json, dialogs
-internal/agent/tools/         read, write, edit, bash, sandbox
-internal/auth/                credential store, api-key probe, oauth, login server
-internal/core/                agent loop, sessions, cost tracking
-internal/extproto/            extension wire-format types
-internal/provider/            anthropic + openai-compatible streaming clients, model catalog
-internal/skills/              skill discovery, frontmatter parser, skill tool
-internal/tui/                 terminal raw-mode, input parser, editor, renderer, markdown, view
-pkg/zotcore/                  public Go SDK for embedding zot in-process
-pkg/zotext/                   public Go SDK for writing extensions
+cmd/zot/                              main()
+packages/provider/                    LLM client surface, model catalog, streaming clients
+packages/provider/auth/               credential store, api-key probe, oauth, login server
+packages/core/                        agent loop, sessions, cost tracking, compaction
+packages/tui/                         terminal raw-mode, input parser, editor, renderer, markdown, view
+packages/agent/                       cli wiring, arg parsing, system prompt, config
+packages/agent/extensions/            extension subprocess manager
+packages/agent/extproto/              extension wire-format types
+packages/agent/modes/                 interactive tui, print, json, dialogs
+packages/agent/tools/                 read, write, edit, bash, sandbox
+packages/agent/skills/                skill discovery, frontmatter parser, skill tool
+packages/agent/swarm/                 background subagent runtime
+packages/agent/sdk/                   public Go SDK for embedding zot in-process (package sdk)
+packages/agent/ext/                   public Go SDK for writing extensions (package ext)
 ```
+
+Downstream consumers can depend on individual packages:
+`go get github.com/patriceckhart/zot/packages/core` pulls only `core` and its transitive deps (today: `provider`), no agent or TUI code.
 
 ## License
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/patriceckhart/zot/internal/agent"
+	"github.com/patriceckhart/zot/packages/agent"
 )
 
 // Injected at build time via -ldflags "-X main.version=... -X main.commit=... -X main.date=...".
