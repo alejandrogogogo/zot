@@ -14,6 +14,14 @@ type Model struct {
 	MaxOutput     int
 	Reasoning     bool // supports reasoning/thinking
 
+	// AdaptiveThinking marks Anthropic models that only support the
+	// adaptive thinking mode (Opus 4.7+). These reject explicit
+	// thinking budgets (thinking:{type:"enabled",budget_tokens:N} -> 400)
+	// and also reject non-default sampling params (temperature/top_p/
+	// top_k). The Anthropic client sends thinking:{type:"adaptive"} plus
+	// output_config.effort and omits temperature for these models.
+	AdaptiveThinking bool
+
 	// Prices are USD per 1M tokens.
 	PriceInput      float64
 	PriceOutput     float64
@@ -230,13 +238,13 @@ var Catalog = []Model{
 	},
 	{
 		Provider: "anthropic", ID: "claude-opus-4-7", DisplayName: "Claude Opus 4.7",
-		ContextWindow: 1000000, MaxOutput: 128000, Reasoning: true,
+		ContextWindow: 1000000, MaxOutput: 128000, Reasoning: true, AdaptiveThinking: true,
 		PriceInput: 5, PriceOutput: 25, PriceCacheRead: 0.5, PriceCacheWrite: 6.25,
 		Speculative: true,
 	},
 	{
 		Provider: "anthropic", ID: "claude-opus-4-8", DisplayName: "Claude Opus 4.8",
-		ContextWindow: 1000000, MaxOutput: 128000, Reasoning: true,
+		ContextWindow: 1000000, MaxOutput: 128000, Reasoning: true, AdaptiveThinking: true,
 		PriceInput: 5, PriceOutput: 25, PriceCacheRead: 0.5, PriceCacheWrite: 6.25,
 		Speculative: true,
 	},

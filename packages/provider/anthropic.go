@@ -162,19 +162,49 @@ type anthTool struct {
 }
 
 type anthThinking struct {
-	Type         string `json:"type"` // "enabled"
-	BudgetTokens int    `json:"budget_tokens"`
+	// Type is "enabled" for budget-based thinking (Opus 4.6 and
+	// earlier) or "adaptive" for adaptive-thinking models (Opus 4.7+).
+	Type string `json:"type"`
+	// BudgetTokens is only sent for Type=="enabled". Adaptive models
+	// reject it (400), so it is omitted for them.
+	BudgetTokens int `json:"budget_tokens,omitempty"`
+}
+
+// anthOutputConfig carries the effort knob used by adaptive-thinking
+// models to control reasoning depth ("low"|"medium"|"high"|"xhigh").
+type anthOutputConfig struct {
+	Effort string `json:"effort,omitempty"`
 }
 
 type anthRequest struct {
-	Model       string            `json:"model"`
-	MaxTokens   int               `json:"max_tokens"`
-	System      []anthSystemBlock `json:"system,omitempty"`
-	Messages    []anthMessage     `json:"messages"`
-	Tools       []anthTool        `json:"tools,omitempty"`
-	Temperature *float32          `json:"temperature,omitempty"`
-	Thinking    *anthThinking     `json:"thinking,omitempty"`
-	Stream      bool              `json:"stream"`
+	Model        string            `json:"model"`
+	MaxTokens    int               `json:"max_tokens"`
+	System       []anthSystemBlock `json:"system,omitempty"`
+	Messages     []anthMessage     `json:"messages"`
+	Tools        []anthTool        `json:"tools,omitempty"`
+	Temperature  *float32          `json:"temperature,omitempty"`
+	Thinking     *anthThinking     `json:"thinking,omitempty"`
+	OutputConfig *anthOutputConfig `json:"output_config,omitempty"`
+	Stream       bool              `json:"stream"`
+}
+
+// usesAdaptiveThinking reports whether a model only supports the
+// adaptive thinking mode (Opus 4.7 and later). These models reject
+// explicit thinking budgets and non-default sampling parameters. The
+// catalog flag is authoritative; the id-substring fallback catches
+// the same family when reached through an Anthropic-Messages-
+// compatible proxy whose catalog row predates the flag.
+func usesAdaptiveThinking(m Model) bool {
+	if m.AdaptiveThinking {
+		return true
+	}
+	id := strings.ToLower(m.ID)
+	for _, marker := range []string{"opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8"} {
+		if strings.Contains(id, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- request building ----
@@ -200,11 +230,18 @@ func (c *anthropicClient) buildRequest(req Request) (*anthRequest, error) {
 		maxTok = m.MaxOutput
 	}
 
+	adaptive := usesAdaptiveThinking(m)
+
 	out := &anthRequest{
-		Model:       req.Model,
-		MaxTokens:   maxTok,
-		Temperature: req.Temperature,
-		Stream:      true,
+		Model:     req.Model,
+		MaxTokens: maxTok,
+		Stream:    true,
+	}
+	// Adaptive-thinking models reject non-default sampling params
+	// (temperature/top_p/top_k -> 400). Only forward temperature for
+	// models that accept it.
+	if !adaptive {
+		out.Temperature = req.Temperature
 	}
 
 	// System prompt assembly differs between api-key and OAuth modes.
@@ -247,19 +284,29 @@ func (c *anthropicClient) buildRequest(req Request) (*anthRequest, error) {
 	}
 
 	if req.Reasoning != "" && m.Reasoning {
-		budget := anthropicReasoningBudget(req.Reasoning)
-		if budget > 0 {
-			// Reasoning requires max_tokens > budget. Keep at least a small
-			// answer budget while respecting the model's advertised output cap.
-			const minAnswerTokens = 1024
-			if m.MaxOutput > minAnswerTokens && budget >= m.MaxOutput {
-				budget = m.MaxOutput - minAnswerTokens
+		if adaptive {
+			// Adaptive-thinking models (Opus 4.7+): the model decides when
+			// and how much to think; depth is steered by output_config.effort.
+			// Explicit budgets are rejected with a 400, so none is sent.
+			out.Thinking = &anthThinking{Type: "adaptive"}
+			if effort := AnthropicAdaptiveEffort(req.Reasoning); effort != "" {
+				out.OutputConfig = &anthOutputConfig{Effort: effort}
 			}
-			out.Thinking = &anthThinking{Type: "enabled", BudgetTokens: budget}
-			if out.MaxTokens <= budget {
-				out.MaxTokens = budget + minAnswerTokens
-				if m.MaxOutput > 0 && out.MaxTokens > m.MaxOutput {
-					out.MaxTokens = m.MaxOutput
+		} else {
+			budget := anthropicReasoningBudget(req.Reasoning)
+			if budget > 0 {
+				// Reasoning requires max_tokens > budget. Keep at least a small
+				// answer budget while respecting the model's advertised output cap.
+				const minAnswerTokens = 1024
+				if m.MaxOutput > minAnswerTokens && budget >= m.MaxOutput {
+					budget = m.MaxOutput - minAnswerTokens
+				}
+				out.Thinking = &anthThinking{Type: "enabled", BudgetTokens: budget}
+				if out.MaxTokens <= budget {
+					out.MaxTokens = budget + minAnswerTokens
+					if m.MaxOutput > 0 && out.MaxTokens > m.MaxOutput {
+						out.MaxTokens = m.MaxOutput
+					}
 				}
 			}
 		}
