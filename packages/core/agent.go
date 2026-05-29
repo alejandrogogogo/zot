@@ -356,8 +356,14 @@ func (a *Agent) runLoop(ctx context.Context, sink func(AgentEvent)) error {
 			// This keeps the transcript self-contained for providers that can
 			// see image blocks in tool messages while making OpenAI vision
 			// models actually receive the image bytes.
+			//
+			// The OpenAI Responses route ("openai-codex") has the same
+			// text-centric tool-output shape: a function_call_output only
+			// carries a string, so images in a tool result never reach the
+			// model. Both providers serialize images correctly when they
+			// arrive as user content, so the mirror covers them both.
 			var imageMirror provider.Message
-			if a.Client != nil && a.Client.Name() == "openai" {
+			if a.Client != nil && (a.Client.Name() == "openai" || a.Client.Name() == "openai-codex") {
 				if mirror := mirrorToolImagesAsUser(toolMsg); len(mirror.Content) > 0 {
 					a.messages = append(a.messages, mirror)
 					a.rev++

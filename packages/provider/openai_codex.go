@@ -262,19 +262,38 @@ func (c *codexClient) buildRequest(req Request) (*codexRequest, error) {
 			for _, c := range msg.Content {
 				if tr, ok := c.(ToolResultBlock); ok {
 					var text strings.Builder
+					imageCount := 0
 					for _, inner := range tr.Content {
-						if tb, ok := inner.(TextBlock); ok {
+						switch v := inner.(type) {
+						case TextBlock:
 							if text.Len() > 0 {
 								text.WriteString("\n")
 							}
-							text.WriteString(tb.Text)
+							text.WriteString(v.Text)
+						case ImageBlock:
+							imageCount++
+						}
+					}
+					// The Responses API function_call_output only carries a
+					// string, so image bytes cannot ride along here. The agent
+					// loop mirrors any tool-result images into the following
+					// user message (which this client does serialize as
+					// input_image). Leave a short text note so an image-only
+					// result is not an empty output the API may reject, and so
+					// the model knows the image arrives next.
+					out := text.String()
+					if out == "" && imageCount > 0 {
+						if imageCount == 1 {
+							out = "[image returned; see the following message]"
+						} else {
+							out = fmt.Sprintf("[%d images returned; see the following message]", imageCount)
 						}
 					}
 					callID, _ := splitCallID(tr.CallID)
 					body.Input = append(body.Input, codexFunctionCallOutput{
 						Type:   "function_call_output",
 						CallID: callID,
-						Output: text.String(),
+						Output: out,
 					})
 				}
 			}
