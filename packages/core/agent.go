@@ -46,6 +46,13 @@ type Agent struct {
 	// model can still see what it said in subsequent turns).
 	BeforeAssistantMessage func(text string) (allowed bool, reason, replacement string)
 
+	// MaxRetries controls agent-level retries for transient provider
+	// failures that arrive after the HTTP stream opens (for example
+	// Anthropic overloaded_error). Zero disables this retry layer.
+	// RetryBaseDelay is doubled for each attempt; zero uses 2s.
+	MaxRetries     int
+	RetryBaseDelay time.Duration
+
 	// OnEvent, if set, mirrors every AgentEvent the loop emits to
 	// this callback in addition to the per-Prompt sink. Used by the
 	// extension manager to fan events out to subscribed extensions
@@ -94,11 +101,13 @@ type Agent struct {
 // NewAgent returns an Agent with sensible defaults.
 func NewAgent(client provider.Client, model, system string, tools Registry) *Agent {
 	return &Agent{
-		Client:   client,
-		Model:    model,
-		System:   system,
-		Tools:    tools,
-		MaxSteps: 0, // 0 = unlimited
+		Client:         client,
+		Model:          model,
+		System:         system,
+		Tools:          tools,
+		MaxSteps:       0, // 0 = unlimited
+		MaxRetries:     3,
+		RetryBaseDelay: 2 * time.Second,
 	}
 }
 
@@ -337,8 +346,23 @@ func (a *Agent) runLoop(ctx context.Context, sink func(AgentEvent)) error {
 				return nil
 			}
 		}
-		stop, assistantMsg, err := a.oneTurn(ctx, sink)
-		sink(EvTurnEnd{Stop: stop, Err: err})
+
+		var (
+			stop         provider.StopReason
+			assistantMsg provider.Message
+			err          error
+		)
+		for attempt := 0; ; attempt++ {
+			stop, assistantMsg, err = a.oneTurn(ctx, sink)
+			sink(EvTurnEnd{Stop: stop, Err: err})
+			if err == nil || !a.canRetryError(err, attempt) {
+				break
+			}
+			a.dropLastAssistantMessage()
+			if sleepErr := sleepRetry(ctx, a.retryDelay(attempt)); sleepErr != nil {
+				return sleepErr
+			}
+		}
 		if err != nil {
 			return err
 		}
@@ -401,6 +425,77 @@ func (a *Agent) runLoop(ctx context.Context, sink func(AgentEvent)) error {
 		return fmt.Errorf("max steps (%d) exceeded", a.MaxSteps)
 	}
 	return nil
+}
+
+func (a *Agent) canRetryError(err error, attempt int) bool {
+	if err == nil || a.MaxRetries <= 0 || attempt >= a.MaxRetries {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if msg == "" || isNonRetryableProviderLimit(msg) {
+		return false
+	}
+	needles := []string{
+		"overloaded", "provider returned error", "rate limit", "ratelimit", "too many requests",
+		"429", "http 429", "500", "http 500", "502", "http 502", "503", "http 503", "504", "http 504",
+		"service unavailable", "server error", "internal error", "network error", "connection error",
+		"connection refused", "connection lost", "fetch failed", "upstream connect", "reset before headers",
+		"socket hang up", "ended without", "stream ended before", "did not get a response", "timed out",
+		"timeout", "terminated", "unexpected eof", "transport failure",
+	}
+	for _, needle := range needles {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func isNonRetryableProviderLimit(msg string) bool {
+	needles := []string{
+		"usage limit", "monthly usage limit", "freeusagelimit", "gousagelimit",
+		"available balance", "insufficient_quota", "out of budget", "quota exceeded", "billing",
+	}
+	for _, needle := range needles {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *Agent) retryDelay(attempt int) time.Duration {
+	base := a.RetryBaseDelay
+	if base <= 0 {
+		base = 2 * time.Second
+	}
+	return base * time.Duration(1<<attempt)
+}
+
+func sleepRetry(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+func (a *Agent) dropLastAssistantMessage() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if n := len(a.messages); n > 0 && a.messages[n-1].Role == provider.RoleAssistant {
+		a.messages = a.messages[:n-1]
+		a.rev++
+	}
 }
 
 // oneTurn calls the LLM once, forwards events, returns the stop reason
