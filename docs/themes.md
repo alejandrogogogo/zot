@@ -115,6 +115,7 @@ All fields are optional.
       "fg": 253,
       "muted": 244,
       "accent": 111,
+      "background": "#0b1020",
       "user": 180,
       "user_bubble_bg": "#42454b",
       "user_bubble_fg": 248,
@@ -180,6 +181,7 @@ Most color fields are xterm-256 indexes (`0`–`255`).
 - `fg` — default foreground text.
 - `muted` — secondary text, dividers, gutters, inactive hints.
 - `accent` — prompt bar, bullets, links, headings, active markers.
+- `background` — optional full-row TUI background. If missing, zot uses the terminal's existing background. Experimental: terminal background colors can vary by emulator and scrollback behavior; for the most reliable result, change your terminal background color in your terminal settings instead.
 - `user` — user role label color; mostly compatibility.
 - `user_bubble_bg` — background behind user message rows.
 - `user_bubble_fg` — foreground inside user message rows.
@@ -192,7 +194,7 @@ Most color fields are xterm-256 indexes (`0`–`255`).
 - `selection_bg` — highlighted row background.
 - `selection_fg` — highlighted row foreground.
 
-`user_bubble_bg` supports richer terminal color forms:
+`background` and `user_bubble_bg` support richer terminal color forms:
 
 ```json
 254

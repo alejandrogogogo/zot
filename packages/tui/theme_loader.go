@@ -82,6 +82,7 @@ type ThemeOverrides struct {
 	FG                *int                 `json:"fg,omitempty"`
 	Muted             *int                 `json:"muted,omitempty"`
 	Accent            *int                 `json:"accent,omitempty"`
+	Background        *TerminalColorValue  `json:"background,omitempty"`
 	User              *int                 `json:"user,omitempty"`
 	UserBubbleBG      *TerminalColorValue  `json:"user_bubble_bg,omitempty"`
 	UserBubbleFG      *int                 `json:"user_bubble_fg,omitempty"`
@@ -350,6 +351,10 @@ func applyThemeOverrides(th Theme, o ThemeOverrides) Theme {
 	}
 	if o.Accent != nil {
 		th.Accent = *o.Accent
+	}
+	if o.Background != nil {
+		bg := o.Background.TerminalColor
+		th.Background = &bg
 	}
 	if o.User != nil {
 		th.User = *o.User

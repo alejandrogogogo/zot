@@ -39,10 +39,11 @@ type Theme struct {
 	FG           int
 	Muted        int
 	Accent       int
-	User         int           // label color for the user role
-	UserBubbleBG TerminalColor // background tint behind user message rows
-	UserBubbleFG int           // foreground colour for user message rows
-	Assistant    int           // label color for the zot role
+	Background   *TerminalColor // optional full-row TUI background; nil keeps terminal default
+	User         int            // label color for the user role
+	UserBubbleBG TerminalColor  // background tint behind user message rows
+	UserBubbleFG int            // foreground colour for user message rows
+	Assistant    int            // label color for the zot role
 	Tool         int
 	ToolOut      int
 	Error        int
@@ -227,6 +228,16 @@ func (t Theme) Highlight(s string) string {
 // SelectionStyle returns the SGR prefix for the theme's selected row.
 func (t Theme) SelectionStyle() string {
 	return sgrFG(t.SelectionFG) + sgrBG(t.SelectionBG)
+}
+
+// BackgroundStyle returns the SGR prefix for the optional full-row
+// TUI background. Empty means zot should leave the terminal's
+// configured background untouched.
+func (t Theme) BackgroundStyle() string {
+	if t.Background == nil {
+		return ""
+	}
+	return sgrBGColor(*t.Background)
 }
 
 // SelectionStyleFG returns the SGR prefix for selected-row text with

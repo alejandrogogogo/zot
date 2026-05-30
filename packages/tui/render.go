@@ -70,6 +70,12 @@ type Renderer struct {
 	// limitation specific to VS Code's terminal that we have no
 	// way to work around without breaking other terminals.
 	keepScrollback bool
+
+	// theme is optional renderer-level styling applied at the final
+	// row-writing boundary. In particular, Theme.Background is painted
+	// as a full-width row background without making every View renderer
+	// know about terminal padding and reset semantics.
+	theme Theme
 }
 
 // NewRenderer returns a renderer that writes to out.
@@ -84,6 +90,13 @@ func NewRenderer(out io.Writer) *Renderer {
 		out:            out,
 		keepScrollback: os.Getenv("TERM_PROGRAM") == "vscode",
 	}
+}
+
+// SetTheme updates renderer-level terminal styling. Changing the
+// background affects every row, so cached frame state is invalidated.
+func (r *Renderer) SetTheme(th Theme) {
+	r.theme = th
+	r.Invalidate()
 }
 
 // Resize tells the renderer the current terminal size.
@@ -166,6 +179,23 @@ func (r *Renderer) Invalidate() {
 // escape we must repaint rather than diff against the previous frame.
 func containsImageEscape(s string) bool {
 	return strings.Contains(s, "\x1b]1337;File=") || strings.Contains(s, "\x1b_G")
+}
+
+// paintBackgroundRow applies the optional theme background to a single
+// already-truncated terminal row. It pads with spaces to cols so the
+// background reaches the right edge, and re-applies the background
+// after full SGR resets inside the row so local styling does not punch
+// transparent holes through the global tint.
+func paintBackgroundRow(line string, cols int, th Theme) string {
+	bg := th.BackgroundStyle()
+	if bg == "" || cols <= 0 || containsImageEscape(line) {
+		return line
+	}
+	line = strings.ReplaceAll(line, reset, reset+bg)
+	if w := visibleWidth(line); w < cols {
+		line += strings.Repeat(" ", cols-w)
+	}
+	return bg + line + reset
 }
 
 // truncateToWidth clips s so its on-screen width doesn't exceed cols
@@ -254,7 +284,12 @@ func (r *Renderer) Draw(lines []string, cursorRow, cursorCol int) {
 		frame[i] = ""
 	}
 	for i, line := range visible {
-		frame[top+i] = truncateToWidth(line, r.cols)
+		frame[top+i] = paintBackgroundRow(truncateToWidth(line, r.cols), r.cols, r.theme)
+	}
+	if r.theme.Background != nil {
+		for i := 0; i < top; i++ {
+			frame[i] = paintBackgroundRow("", r.cols, r.theme)
+		}
 	}
 
 	var w strings.Builder
@@ -297,17 +332,20 @@ func (r *Renderer) Draw(lines []string, cursorRow, cursorCol int) {
 	// terminal doesn't reliably clear background colors on row
 	// overwrites, leaving ghost highlights behind.
 	hasSelection := false
-	for _, l := range frame {
-		if strings.Contains(l, "\x1b[48;5;") {
-			hasSelection = true
-			break
-		}
-	}
-	if !hasSelection && r.prev != nil {
-		for _, l := range r.prev {
-			if strings.Contains(l, "\x1b[48;5;") {
+	if r.theme.Background == nil {
+		selectionBG := sgrBG(r.theme.SelectionBG)
+		for _, l := range frame {
+			if selectionBG != "" && strings.Contains(l, selectionBG) {
 				hasSelection = true
 				break
+			}
+		}
+		if !hasSelection && r.prev != nil {
+			for _, l := range r.prev {
+				if selectionBG != "" && strings.Contains(l, selectionBG) {
+					hasSelection = true
+					break
+				}
 			}
 		}
 	}
@@ -355,11 +393,11 @@ func (r *Renderer) DrawLog(chat, bottom []string, cursorBottomRow, cursorCol int
 	}
 	chatFrame := make([]string, len(chat))
 	for i, line := range chat {
-		chatFrame[i] = truncateToWidth(line, r.cols)
+		chatFrame[i] = paintBackgroundRow(truncateToWidth(line, r.cols), r.cols, r.theme)
 	}
 	bottomFrame := make([]string, len(bottom))
 	for i, line := range bottom {
-		bottomFrame[i] = truncateToWidth(line, r.cols)
+		bottomFrame[i] = paintBackgroundRow(truncateToWidth(line, r.cols), r.cols, r.theme)
 	}
 
 	// Always reserve one real row below the editor/status band. This is
@@ -371,7 +409,18 @@ func (r *Renderer) DrawLog(chat, bottom []string, cursorBottomRow, cursorCol int
 	lines = append(lines, chatFrame...)
 	lines = append(lines, bottomFrame...)
 	for range bottomMarginRows {
-		lines = append(lines, "")
+		lines = append(lines, paintBackgroundRow("", r.cols, r.theme))
+	}
+	// In main-screen flow mode zot normally emits only its logical
+	// content rows and leaves the rest of the terminal viewport alone.
+	// When a theme background is configured, fill that otherwise-idle
+	// space with painted blank rows so the full window is tinted while
+	// keeping the scrollback-oriented renderer model unchanged for the
+	// default transparent case.
+	if r.theme.Background != nil {
+		for len(lines) < r.rows {
+			lines = append(lines, paintBackgroundRow("", r.cols, r.theme))
+		}
 	}
 	if len(lines) == 0 {
 		lines = []string{""}
