@@ -911,6 +911,14 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 	}()
 
 	initialCfg, _ := LoadConfig()
+	theme, _, themeErr := tui.DetectThemeWithCustom(ZotHome(), initialCfg.Theme, 80*time.Millisecond)
+	if themeErr != nil {
+		fmt.Fprintln(os.Stderr, "theme load:", themeErr)
+		if initialCfg.Theme != "" && !tui.ThemeExists(ZotHome(), initialCfg.Theme) {
+			initialCfg.Theme = ""
+			_ = SaveConfig(initialCfg)
+		}
+	}
 
 	// swarmMgr was constructed and reloaded earlier (before the agent
 	// build, so the auto-swarm tool could capture it). Here we just
@@ -927,9 +935,11 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 
 	iv = modes.NewInteractive(modes.InteractiveConfig{
 		Terminal:                   term,
-		Theme:                      tui.DetectThemeFromBackground(80 * time.Millisecond),
+		Theme:                      theme,
 		InlineImagesEnabled:        initialCfg.InlineImagesEnabled,
 		AutoSwarmEnabled:           initialCfg.AutoSwarmEnabled,
+		ThemeName:                  initialCfg.Theme,
+		ExtensionThemes:            extMgr.ThemeOptions,
 		AutoSwarmSystemAddendum:    AutoSwarmSystemAddendum,
 		SettingsStore:              configSettingsStore{},
 		Model:                      r.Model,

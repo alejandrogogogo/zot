@@ -20,6 +20,7 @@ var docFiles = map[string]string{
 	"extensions.md": "docs/extensions.md",
 	"rpc.md":        "docs/rpc.md",
 	"skills.md":     "docs/skills.md",
+	"themes.md":     "docs/themes.md",
 }
 
 // EnsureInstalled writes the embedded docs into $ZOT_HOME/docs and

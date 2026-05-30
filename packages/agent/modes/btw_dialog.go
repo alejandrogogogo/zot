@@ -208,7 +208,9 @@ func (d *btwDialog) submit(invalidate func()) {
 	d.editor.Clear()
 	d.loading = true
 	if d.spin == nil {
-		d.spin = newSpinner()
+		d.spin = newSpinner(d.theme)
+	} else {
+		d.spin.Configure(d.theme)
 	}
 	d.spin.Start()
 	d.turns = append(d.turns, btwTurn{User: question})

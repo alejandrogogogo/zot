@@ -1160,8 +1160,10 @@ func (d *swarmDialog) appendTranscriptEditor(out []string, th tui.Theme, width i
 	// chat's busy line.
 	if agentIsBusy(a) {
 		if d.transcriptSpin == nil {
-			d.transcriptSpin = newSpinner()
+			d.transcriptSpin = newSpinner(th)
 			d.transcriptSpin.Start()
+		} else {
+			d.transcriptSpin.Configure(th)
 		}
 		out = append(out, "")
 		prefix := fmt.Sprintf("%s %s, %s",

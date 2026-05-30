@@ -8,6 +8,7 @@ import (
 	"github.com/patriceckhart/zot/packages/agent/extproto"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -85,6 +86,39 @@ done
 	mfb, _ := json.Marshal(manifest)
 	if err := os.WriteFile(filepath.Join(dir, "extension.json"), mfb, 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDiscoverLoadsThemeOnlyExtension(t *testing.T) {
+	tmp := t.TempDir()
+	extDir := filepath.Join(tmp, "extensions", "theme-only")
+	if err := os.MkdirAll(extDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"theme-only","version":"1.0.0","description":"theme only"}`
+	if err := os.WriteFile(filepath.Join(extDir, "extension.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	theme := `{"name":"Theme Only","description":"theme from extension","colors":{"dark":{"accent":204}}}`
+	if err := os.WriteFile(filepath.Join(extDir, "theme.json"), []byte(theme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := New(tmp, "", "0.0.0-test", "anthropic", "claude-opus-4-7", nil)
+	if errs := mgr.Discover(context.Background()); len(errs) > 0 {
+		t.Fatalf("discover errors: %v", errs)
+	}
+	defer mgr.Stop(10 * time.Millisecond)
+
+	opts := mgr.ThemeOptions()
+	if len(opts) != 1 {
+		t.Fatalf("theme options = %d, want 1", len(opts))
+	}
+	if opts[0].Label != "Theme Only" || opts[0].Path != filepath.Join(extDir, "theme.json") {
+		t.Fatalf("unexpected theme option: %#v", opts[0])
+	}
+	if !strings.Contains(opts[0].Description, "from extension theme-only") {
+		t.Fatalf("description missing extension source: %q", opts[0].Description)
 	}
 }
 

@@ -22,12 +22,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/patriceckhart/zot/packages/agent/extproto"
+	"github.com/patriceckhart/zot/packages/tui"
 )
 
 // Manifest is the extension.json file shipped alongside an
@@ -249,7 +251,8 @@ func (m *Manager) loadOne(ctx context.Context, dir string) error {
 	if mf.Name == "" {
 		return errors.New("manifest: name is required")
 	}
-	if mf.Exec == "" {
+	hasTheme := hasExtensionTheme(dir)
+	if mf.Exec == "" && !hasTheme {
 		return errors.New("manifest: exec is required")
 	}
 	if !mf.IsEnabled() {
@@ -275,8 +278,12 @@ func (m *Manager) loadOne(ctx context.Context, dir string) error {
 		eventSubs:        map[string]struct{}{},
 		interceptSubs:    map[string]struct{}{},
 	}
-	if err := m.spawn(ctx, ext); err != nil {
-		return err
+	if mf.Exec != "" {
+		if err := m.spawn(ctx, ext); err != nil {
+			return err
+		}
+	} else {
+		ext.readyOnce.Do(func() { close(ext.readyCh) })
 	}
 
 	m.mu.Lock()
@@ -296,6 +303,37 @@ func (m *Manager) loadOne(ctx context.Context, dir string) error {
 // Loaded BEFORE Discover so explicit paths win on name conflicts
 // against installed extensions. Spawns happen in parallel like the
 // regular discovery path; errors are returned per path.
+func hasExtensionTheme(dir string) bool {
+	for _, file := range []string{"theme.json", filepath.Join("themes", "theme.json")} {
+		if _, err := os.Stat(filepath.Join(dir, file)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) ThemeOptions() []tui.ThemeOption {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	names := make([]string, 0, len(m.ext))
+	for name := range m.ext {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var out []tui.ThemeOption
+	for _, name := range names {
+		ext := m.ext[name]
+		for _, file := range []string{"theme.json", "themes/theme.json"} {
+			path := filepath.Join(ext.Dir, file)
+			value := path
+			if opt, ok := tui.ThemeOptionFromFile(path, value, "extension "+ext.Manifest.Name); ok {
+				out = append(out, opt)
+			}
+		}
+	}
+	return out
+}
+
 func (m *Manager) LoadExplicit(ctx context.Context, paths []string) []error {
 	if len(paths) == 0 {
 		return nil
@@ -379,35 +417,11 @@ func (m *Manager) Reload(ctx context.Context, grace time.Duration) ReloadStats {
 	// Graceful stop of the old set (reuses Stop's shutdown logic,
 	// but Stop re-reads m.ext which is now empty, so we replicate
 	// the small shutdown loop here on the snapshot).
+	oldExts := make([]*Extension, 0, len(old))
 	for _, ext := range old {
-		if frame, err := extproto.Encode(extproto.ShutdownFromHost{Type: "shutdown"}); err == nil {
-			_, _ = ext.stdin.Write(frame)
-		}
-		_ = ext.stdin.Close()
+		oldExts = append(oldExts, ext)
 	}
-	deadline := time.Now().Add(grace)
-	for _, ext := range old {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			remaining = 100 * time.Millisecond
-		}
-		done := make(chan struct{})
-		go func(e *Extension) { _ = e.cmd.Wait(); close(done) }(ext)
-		select {
-		case <-done:
-		case <-time.After(remaining):
-			_ = ext.cmd.Process.Signal(syscall.SIGTERM)
-			select {
-			case <-done:
-			case <-time.After(time.Second):
-				_ = ext.cmd.Process.Kill()
-				<-done
-			}
-		}
-		if ext.logFile != nil {
-			_ = ext.logFile.Close()
-		}
-	}
+	stopExtensions(oldExts, grace)
 
 	// Fresh load. Explicit paths first (they still win on conflict).
 	if errs := m.LoadExplicit(ctx, explicit); len(errs) > 0 {
@@ -991,8 +1005,14 @@ func (m *Manager) Stop(gracePeriod time.Duration) {
 		exts = append(exts, e)
 	}
 	m.mu.RUnlock()
+	stopExtensions(exts, gracePeriod)
+}
 
+func stopExtensions(exts []*Extension, gracePeriod time.Duration) {
 	for _, ext := range exts {
+		if ext.stdin == nil {
+			continue
+		}
 		if frame, err := extproto.Encode(extproto.ShutdownFromHost{Type: "shutdown"}); err == nil {
 			_, _ = ext.stdin.Write(frame)
 		}
@@ -1001,6 +1021,12 @@ func (m *Manager) Stop(gracePeriod time.Duration) {
 
 	deadline := time.Now().Add(gracePeriod)
 	for _, ext := range exts {
+		if ext.cmd == nil {
+			if ext.logFile != nil {
+				_ = ext.logFile.Close()
+			}
+			continue
+		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			remaining = 100 * time.Millisecond

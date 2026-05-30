@@ -46,7 +46,7 @@ func RenderMarkdown(src string, th Theme, width int) string {
 		}
 		code := strings.TrimRight(fenceBuf.String(), "\n")
 		if fenceLang != "" {
-			for _, l := range HighlightCode(code, fenceLang) {
+			for _, l := range th.HighlightCode(code, fenceLang) {
 				out.WriteString(l)
 				out.WriteString("\n")
 			}

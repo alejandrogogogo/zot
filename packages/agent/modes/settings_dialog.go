@@ -1,6 +1,10 @@
 package modes
 
 import (
+	"strings"
+
+	"github.com/mattn/go-runewidth"
+
 	"github.com/patriceckhart/zot/packages/tui"
 )
 
@@ -160,11 +164,11 @@ func (d *settingsDialog) Render(th tui.Theme, width int) []string {
 	for i, it := range d.items {
 		box := "[ ]"
 		if it.value {
-			box = "[x]"
+			box = "[✓]"
 		}
 		plain := "  " + box + " " + it.label
 		if len(it.options) > 0 {
-			box = "[>]"
+			box = "[→]"
 			if it.choice < 0 || it.choice >= len(it.options) {
 				it.choice = 0
 			}
@@ -181,7 +185,9 @@ func (d *settingsDialog) Render(th tui.Theme, width int) []string {
 			lines = append(lines, plain)
 		}
 		if it.desc != "" {
-			lines = append(lines, th.FG256(th.Muted, "      "+it.desc))
+			for _, desc := range wrapSettingDescription(it.desc, width, 6) {
+				lines = append(lines, th.FG256(th.Muted, desc))
+			}
 		}
 	}
 	lines = append(lines, frameRule(th, width))
@@ -211,9 +217,36 @@ func (d *settingsDialog) renderOptions(th tui.Theme, width int) []string {
 			lines = append(lines, plain)
 		}
 		if opt.desc != "" {
-			lines = append(lines, th.FG256(th.Muted, "      "+opt.desc))
+			for _, desc := range wrapSettingDescription(opt.desc, width, 6) {
+				lines = append(lines, th.FG256(th.Muted, desc))
+			}
 		}
 	}
 	lines = append(lines, frameRule(th, width))
+	return lines
+}
+
+func wrapSettingDescription(desc string, width, indent int) []string {
+	prefix := strings.Repeat(" ", indent)
+	limit := width - indent
+	if limit < 20 {
+		limit = 20
+	}
+	words := strings.Fields(desc)
+	if len(words) == 0 {
+		return nil
+	}
+	var lines []string
+	line := words[0]
+	for _, word := range words[1:] {
+		candidate := line + " " + word
+		if runewidth.StringWidth(candidate) <= limit {
+			line = candidate
+			continue
+		}
+		lines = append(lines, prefix+line)
+		line = word
+	}
+	lines = append(lines, prefix+line)
 	return lines
 }

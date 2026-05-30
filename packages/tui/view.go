@@ -1290,7 +1290,7 @@ func (v *View) renderDiffRow(line string, width, color int, lineNo int, mark byt
 	lang := LanguageFromPath(sourcePath)
 	var codeRendered string
 	if lang != "" {
-		if h := HighlightCode(code, lang); len(h) == 1 {
+		if h := v.Theme.HighlightCode(code, lang); len(h) == 1 {
 			codeRendered = h[0]
 		}
 	}
@@ -1334,7 +1334,7 @@ func (v *View) renderDiffRow(line string, width, color int, lineNo int, mark byt
 			trunc = code[:maxCode-3] + "..."
 		}
 		if lang != "" {
-			if h := HighlightCode(trunc, lang); len(h) == 1 {
+			if h := v.Theme.HighlightCode(trunc, lang); len(h) == 1 {
 				codeRendered = h[0]
 			} else if mark == ' ' {
 				codeRendered = v.Theme.FG256(v.Theme.Muted, trunc)
@@ -1470,7 +1470,7 @@ func (v *View) renderNumberedFile(text, sourcePath string) []string {
 	lang := LanguageFromPath(sourcePath)
 	var highlighted []string
 	if lang != "" {
-		highlighted = HighlightCode(strings.Join(codes, "\n"), lang)
+		highlighted = v.Theme.HighlightCode(strings.Join(codes, "\n"), lang)
 		// Chroma sometimes collapses the trailing empty line. Pad to
 		// align with the gutter slice so per-line zipping works.
 		for len(highlighted) < len(codes) {
@@ -1773,7 +1773,7 @@ func (v *View) renderRawFile(text, sourcePath string, startLine int) []string {
 	lang := LanguageFromPath(sourcePath)
 	var highlighted []string
 	if lang != "" {
-		highlighted = HighlightCode(strings.Join(code, "\n"), lang)
+		highlighted = v.Theme.HighlightCode(strings.Join(code, "\n"), lang)
 		for len(highlighted) < len(code) {
 			highlighted = append(highlighted, "")
 		}

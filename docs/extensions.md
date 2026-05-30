@@ -13,6 +13,8 @@ Four phases shipped so far:
 - **Phase 3**: lifecycle event subscriptions + tool-call interception
   for guardrail extensions.
 - **Phase 4**: interactive extension-owned panels rendered inside zot.
+- **Theme-only extensions**: ship `theme.json` without launching a
+  subprocess. See [themes.md](themes.md).
 
 ## Quick start
 
@@ -53,6 +55,10 @@ Drop it in a directory with this `extension.json`:
   "enabled": true
 }
 ```
+
+`exec` is required for protocol extensions. If an extension only ships
+`theme.json` or `themes/theme.json`, no `exec` is required and zot does
+not spawn a subprocess.
 
 `chmod +x hello.py`, install:
 
