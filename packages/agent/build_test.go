@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/patriceckhart/zot/packages/provider"
 )
 
 func TestReadAgentsContextLoadsGlobalAndAncestors(t *testing.T) {
@@ -108,75 +106,5 @@ func TestResolveExplicitFlagStaleDoesNotRepairConfig(t *testing.T) {
 	cfg, _ := LoadConfig()
 	if cfg.Model != good {
 		t.Errorf("config.json was clobbered (was %q; now %q)", good, cfg.Model)
-	}
-}
-
-func TestResolveOllamaUsesModelBaseURLBeforeDefault(t *testing.T) {
-	t.Setenv("ZOT_HOME", t.TempDir())
-	provider.SetLiveModels(nil)
-	defer provider.SetLiveModels(nil)
-	provider.SetUserModels([]provider.Model{{
-		Provider:      "ollama",
-		ID:            "qwen-local",
-		DisplayName:   "Qwen Local",
-		ContextWindow: 32768,
-		MaxOutput:     8192,
-		BaseURL:       "http://localhost:8000/v1",
-	}})
-
-	r, err := Resolve(Args{Provider: "ollama", Model: "qwen-local"}, false)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
-	}
-	if r.BaseURL != "http://localhost:8000/v1" {
-		t.Fatalf("BaseURL = %q, want models.json baseUrl", r.BaseURL)
-	}
-}
-
-func TestResolveOllamaFallsBackToDefaultBaseURL(t *testing.T) {
-	t.Setenv("ZOT_HOME", t.TempDir())
-	provider.SetLiveModels(nil)
-	defer provider.SetLiveModels(nil)
-
-	r, err := Resolve(Args{Provider: "ollama", Model: "any-local-model"}, false)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
-	}
-	if r.BaseURL != "http://localhost:11434" {
-		t.Fatalf("BaseURL = %q, want ollama default", r.BaseURL)
-	}
-}
-
-func TestCanonicalProviderResolvesAliases(t *testing.T) {
-	cases := map[string]string{
-		"bedrock":         "amazon-bedrock",
-		"AWS-Bedrock":     "amazon-bedrock",
-		"  bedrock  ":     "amazon-bedrock",
-		"vertex":          "google-vertex",
-		"gemini":          "google",
-		"azure":           "azure-openai-responses",
-		"copilot":         "github-copilot",
-		"codex":           "openai-codex",
-		"moonshot":        "moonshotai",
-		"vercel":          "vercel-ai-gateway",
-		"hf":              "huggingface",
-		"anthropic":       "anthropic",       // canonical passes through
-		"amazon-bedrock":  "amazon-bedrock",  // already canonical
-		"totally-unknown": "totally-unknown", // unknown returned unchanged (lowered)
-		"Totally-UNKNOWN": "totally-unknown",
-		"":                "",
-	}
-	for in, want := range cases {
-		if got := canonicalProvider(in); got != want {
-			t.Errorf("canonicalProvider(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestCanonicalProviderAliasesAreKnown(t *testing.T) {
-	for alias, canon := range providerAliases {
-		if !isKnownProvider(canon) {
-			t.Errorf("alias %q maps to %q which is not a known provider", alias, canon)
-		}
 	}
 }

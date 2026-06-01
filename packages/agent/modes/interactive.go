@@ -2,7 +2,6 @@ package modes
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -214,7 +213,6 @@ type chatCacheKey struct {
 	statusErr       string
 	help            string
 	extNotes        string
-	shellBlock      string
 	updateAvailable bool
 	updateCurrent   string
 	updateLatest    string
@@ -260,28 +258,17 @@ type Interactive struct {
 	streamFlushPending bool
 	toolCalls          map[string]*tui.ToolCallView
 	toolOrder          []string
-	// toolGate records, per tool-call id, how many runes of paced
-	// assistant text must have drained into `streaming` before that
-	// tool block may appear. It exists to make stream ordering
-	// deterministic: a tool call can arrive from the provider while
-	// the prose that logically precedes it is still being typed out
-	// by the pacer. Without gating, the tool block would render
-	// immediately while the intro paragraph keeps filling in below
-	// it. We snapshot the total expected stream length (already
-	// streamed + still pending) at the moment the tool starts, and
-	// hold the block back until the pacer reaches it.
-	toolGate         map[string]int
-	statusErr        string
-	statusOK         string
-	liveBlock        []string // live streaming/tool progress rendered outside scrollback
-	helpBlock        []string // rendered above the chat when /help was typed
-	cumUsage         provider.Usage
-	lastCtxInput     int // input_tokens of the most recent turn — approximates current context size
-	busy             bool
-	dirty            chan struct{}
-	cancelTurn       context.CancelFunc
-	scrollOffset     int // rows from the bottom; 0 = pinned to latest
-	prevScrollOffset int // last value redraw snapped against; tracks intent
+	statusErr          string
+	statusOK           string
+	liveBlock          []string // live streaming/tool progress rendered outside scrollback
+	helpBlock          []string // rendered above the chat when /help was typed
+	cumUsage           provider.Usage
+	lastCtxInput       int // input_tokens of the most recent turn — approximates current context size
+	busy               bool
+	dirty              chan struct{}
+	cancelTurn         context.CancelFunc
+	scrollOffset       int // rows from the bottom; 0 = pinned to latest
+	prevScrollOffset   int // last value redraw snapped against; tracks intent
 
 	// prevChatLen and prevChatCols track the chat buffer's size at the
 	// last redraw so that when content grows below the user's viewport
@@ -391,15 +378,6 @@ type Interactive struct {
 	// transcript) until cleared by /clear or another reset.
 	extNotes []string
 
-	// shellBlock holds the rendered terminal-log lines of the most
-	// recent !command shell escape. It lives below the transcript
-	// (under extNotes) until the user sends their next prompt or runs
-	// /clear. shellRunning is true while a !command is executing; it
-	// shares i.busy/i.cancelTurn so esc cancels it and no turn or
-	// other shell escape can start while one is in flight.
-	shellBlock   []string
-	shellRunning bool
-
 	// sessionLoading is true while a /sessions selection is being read
 	// on a background goroutine. Keeping this off the input goroutine
 	// lets ctrl+c/exit remain responsive for very large JSONL sessions.
@@ -451,7 +429,6 @@ func NewInteractive(cfg InteractiveConfig) *Interactive {
 		ed:                tui.NewEditor(cfg.Theme.AccentBar(cfg.Theme.Accent)),
 		rend:              renderer,
 		toolCalls:         map[string]*tui.ToolCallView{},
-		toolGate:          map[string]int{},
 		dirty:             make(chan struct{}, 8),
 		dialog:            newLoginDialog(),
 		modelDialog:       newModelDialog(),
@@ -777,7 +754,6 @@ func (i *Interactive) chatCacheKeyLocked(cols int) (chatCacheKey, bool) {
 		statusErr:       i.statusErr,
 		help:            strings.Join(i.helpBlock, "\n"),
 		extNotes:        strings.Join(i.extNotes, "\n"),
-		shellBlock:      strings.Join(i.shellBlock, "\n"),
 		updateAvailable: i.updateInfo.Available,
 		updateCurrent:   i.updateInfo.Current,
 		updateLatest:    i.updateInfo.Latest,
@@ -836,14 +812,6 @@ func (i *Interactive) buildChatLocked(cols int) []string {
 	i.view.ToolCalls = i.view.ToolCalls[:0]
 	if i.busy {
 		for _, id := range i.toolOrder {
-			// Deterministic ordering: a tool block stays hidden until
-			// the paced assistant text that preceded it has finished
-			// typing out. toolOrder is append-only in arrival order,
-			// so once one tool is still gated, every later tool is too,
-			// so stop here to avoid showing a tool out of sequence.
-			if !i.toolGateOpenLocked(id) {
-				break
-			}
 			if tc, ok := i.toolCalls[id]; ok {
 				i.view.ToolCalls = append(i.view.ToolCalls, *tc)
 			}
@@ -901,14 +869,6 @@ func (i *Interactive) buildChatLocked(cols int) []string {
 	// transcript, above the dialog/editor band. Cleared by /clear.
 	if len(i.extNotes) > 0 {
 		chat = append(chat, i.extNotes...)
-		chat = append(chat, "")
-	}
-
-	// Shell-escape terminal-log block (!command). Rendered below the
-	// transcript and extension notes; cleared when the next prompt is
-	// sent or on /clear so it never leaks into the model conversation.
-	if len(i.shellBlock) > 0 {
-		chat = append(chat, i.shellBlock...)
 		chat = append(chat, "")
 	}
 
@@ -1081,19 +1041,7 @@ func (i *Interactive) redraw() {
 	// from the chat below, instead of the diff path leaving stale
 	// dialog content behind. Equivalent to the user pressing ctrl+l.
 	overlayOpen := len(dialog) > 0 || len(suggest) > 0
-	if i.rend != nil && i.prevOverlayOpen && !overlayOpen {
-		// An overlay (dialog or slash/file popup) just closed, so the
-		// bottom band shrinks. On terminals where we can drop
-		// scrollback, a full Clear is the simplest way to guarantee
-		// the vacated rows are repainted from the chat below.
-		//
-		// On VS Code's terminal closing a dialog leaves the stale
-		// overlay rows in the retained scrollback (we can't drop them
-		// with the quiet in-place diff). Run the same full Clear() that
-		// Ctrl+L uses so the scrollback is purged and the conversation
-		// is repainted clean, matching what the user expects after
-		// dismissing a picker. Clear() is keepScrollback-aware and
-		// emits \x1b[3J there.
+	if i.prevOverlayOpen && !overlayOpen && i.rend != nil {
 		i.rend.Clear()
 	}
 	i.prevOverlayOpen = overlayOpen
@@ -1672,12 +1620,6 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		if act.Select {
 			i.applySessionSelection(act.Path)
 		}
-		// Always request a redraw after handling a key here: when esc
-		// closes the picker, the overlay-close detection in the render
-		// pass needs to run so the tall dialog rows get repainted from
-		// the chat (otherwise VS Code's retained scrollback leaves a
-		// duplicate frame on screen).
-		i.invalidate()
 		return false
 	}
 	if i.swarmDialog.Active() {
@@ -1903,21 +1845,14 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		i.mu.Lock()
 		hadHelp := len(i.helpBlock) > 0
 		hadNotes := len(i.extNotes) > 0
-		// Only dismiss a parked shell-escape log on esc when nothing is
-		// running; if a !command is in flight, esc must fall through to
-		// the cancel path below instead of just hiding the (empty) block.
-		hadShell := len(i.shellBlock) > 0 && !i.shellRunning
 		if hadHelp {
 			i.helpBlock = nil
 		}
 		if hadNotes {
 			i.extNotes = nil
 		}
-		if hadShell {
-			i.shellBlock = nil
-		}
 		i.mu.Unlock()
-		if hadHelp || hadNotes || hadShell {
+		if hadHelp || hadNotes {
 			i.invalidate()
 			return false
 		}
@@ -2136,11 +2071,6 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		i.inputHistoryIndex = -1
 		i.suggest.Reset()
 		i.fileSuggest.Reset()
-
-		if cmd, ok := shellEscapeCommand(text); ok {
-			i.startShellEscape(ctx, cmd)
-			return false
-		}
 
 		if looksLikeSlashCommand(text) {
 			head := text
@@ -2376,42 +2306,8 @@ func (i *Interactive) Notify(extName, level, message string) {
 	i.invalidate()
 }
 
-// ClearNotes removes every note line owned by extName from the
-// bottom-sticky ext-notes block. Extensions use this to retract a
-// transient status line (e.g. an approval prompt) once it no longer
-// applies, instead of leaving it stacked forever. Notes from other
-// extensions and internal notes (auto-compact) are left untouched.
-func (i *Interactive) ClearNotes(extName string) {
-	marker := "[" + extName + "] "
-	i.mu.Lock()
-	if len(i.extNotes) == 0 {
-		i.mu.Unlock()
-		return
-	}
-	kept := i.extNotes[:0:0]
-	changed := false
-	for _, line := range i.extNotes {
-		if strings.Contains(line, marker) {
-			changed = true
-			continue
-		}
-		kept = append(kept, line)
-	}
-	if changed {
-		i.extNotes = kept
-	}
-	i.mu.Unlock()
-	if changed {
-		i.invalidate()
-	}
-}
-
 // Submit feeds text through the agent loop as if the user had typed it.
 func (i *Interactive) Submit(text string) {
-	if cmd, ok := shellEscapeCommand(text); ok {
-		i.startShellEscape(i.runCtx, cmd)
-		return
-	}
 	i.startTurn(i.runCtx, text)
 }
 
@@ -2432,7 +2328,6 @@ func (i *Interactive) ApplyChangedCWD(ag *core.Agent, provider, model, cwd strin
 	i.cfg.Model = model
 	i.toolCalls = map[string]*tui.ToolCallView{}
 	i.toolOrder = nil
-	i.toolGate = map[string]int{}
 	i.helpBlock = nil
 	i.parkedTurn = 0
 	i.statusErr = ""
@@ -2473,10 +2368,6 @@ func (i *Interactive) SubmitSlash(text string) {
 // forwarded — because the queued-prompt path is text-only; a
 // follow-up can expand the queue entry to carry images.
 func (i *Interactive) SubmitOrQueue(text string, images []provider.ImageBlock) {
-	if cmd, ok := shellEscapeCommand(text); ok {
-		i.startShellEscape(i.runCtx, cmd)
-		return
-	}
 	i.mu.Lock()
 	if i.agent == nil {
 		i.statusErr = "not logged in. type /login first."
@@ -3102,7 +2993,6 @@ func (i *Interactive) runSlash(ctx context.Context, cmd string) (done bool) {
 		i.mu.Lock()
 		i.toolCalls = map[string]*tui.ToolCallView{}
 		i.toolOrder = nil
-		i.toolGate = map[string]int{}
 		i.statusErr = ""
 		i.statusOK = ""
 		i.helpBlock = nil
@@ -3110,7 +3000,6 @@ func (i *Interactive) runSlash(ctx context.Context, cmd string) (done bool) {
 		i.parkedTotal = 0
 		i.scrollOffset = 0
 		i.extNotes = nil
-		i.shellBlock = nil
 		i.view.InvalidateRenderCache()
 		i.mu.Unlock()
 	case "/help":
@@ -3222,7 +3111,6 @@ func (i *Interactive) runSlash(ctx context.Context, cmd string) (done bool) {
 		i.mu.Lock()
 		i.toolCalls = map[string]*tui.ToolCallView{}
 		i.toolOrder = nil
-		i.toolGate = map[string]int{}
 		i.helpBlock = nil
 		i.parkedTurn = 0
 		i.statusOK = "cwd " + i.cfg.CWD
@@ -3458,79 +3346,7 @@ func (i *Interactive) doLogout(target string) {
 	}
 }
 
-func providerSetupInfo(provider string) (string, []string, bool) {
-	const docsURL = "https://raw.githubusercontent.com/patriceckhart/zot/main/docs/providers.md"
-	switch provider {
-	case "amazon-bedrock":
-		return "Amazon Bedrock setup", []string{
-			"Amazon Bedrock uses AWS credentials instead of a generic zot API-key entry.",
-			"Configure an AWS profile, IAM keys, bearer token, or role-based credentials.",
-			"",
-			"For Bedrock API keys, set:",
-			"  AWS_BEARER_TOKEN_BEDROCK=...",
-			"  AWS_REGION=us-east-1",
-			"",
-			"Docs:",
-			"  " + docsURL,
-		}, true
-	case "google-vertex":
-		return "Google Vertex AI setup", []string{
-			"Google Vertex AI usually uses Google Cloud credentials and project settings.",
-			"Set a Google API key, application-default credentials, or a service account.",
-			"",
-			"Common environment:",
-			"  GOOGLE_CLOUD_API_KEY=...",
-			"  GOOGLE_CLOUD_PROJECT=...",
-			"  GOOGLE_CLOUD_LOCATION=us-central1",
-			"",
-			"Docs:",
-			"  " + docsURL,
-		}, true
-	case "cloudflare-workers-ai":
-		return "Cloudflare Workers AI setup", []string{
-			"Cloudflare Workers AI needs both an API token and an account ID.",
-			"",
-			"Set:",
-			"  CLOUDFLARE_API_KEY=...",
-			"  CLOUDFLARE_ACCOUNT_ID=...",
-			"",
-			"Docs:",
-			"  " + docsURL,
-		}, true
-	case "cloudflare-ai-gateway":
-		return "Cloudflare AI Gateway setup", []string{
-			"Cloudflare AI Gateway needs an API token, account ID, and gateway ID.",
-			"",
-			"Set:",
-			"  CLOUDFLARE_API_KEY=...",
-			"  CLOUDFLARE_ACCOUNT_ID=...",
-			"  CLOUDFLARE_GATEWAY_ID=...",
-			"",
-			"Docs:",
-			"  " + docsURL,
-		}, true
-	case "azure-openai-responses":
-		return "Azure OpenAI Responses setup", []string{
-			"Azure OpenAI needs an API key plus your Azure endpoint or deployment setup.",
-			"",
-			"Set:",
-			"  AZURE_OPENAI_API_KEY=...",
-			"  AZURE_OPENAI_BASE_URL=https://your-resource.openai.azure.com",
-			"  AZURE_OPENAI_API_VERSION=2024-02-01",
-			"",
-			"Docs:",
-			"  " + docsURL,
-		}, true
-	default:
-		return "", nil, false
-	}
-}
-
 func (i *Interactive) startAPIKeyFlow(provider string) {
-	if title, lines, ok := providerSetupInfo(provider); ok {
-		i.dialog.ShowInfo(title, lines)
-		return
-	}
 	if provider == "kimi" && i.cfg.SetKimiCLIFallbackDisabled != nil {
 		_ = i.cfg.SetKimiCLIFallbackDisabled(false)
 	}
@@ -4101,7 +3917,6 @@ func (i *Interactive) runCompact(parent context.Context, auto bool) {
 			i.lastCtxInput = 0
 			i.toolCalls = map[string]*tui.ToolCallView{}
 			i.toolOrder = nil
-			i.toolGate = map[string]int{}
 			i.view.InvalidateRenderCache()
 			// Pop queued prompt if any.
 			if len(i.queued) > 0 {
@@ -4122,134 +3937,6 @@ func (i *Interactive) runCompact(parent context.Context, auto bool) {
 	}()
 }
 
-// shellEscapeCommand reports whether text is a "!command" shell
-// escape and, if so, returns the command with the leading '!' (and
-// surrounding whitespace) stripped. A bare "!" with no command is
-// treated as not an escape so it falls through to the normal prompt
-// path rather than running an empty shell.
-func shellEscapeCommand(text string) (string, bool) {
-	trimmed := strings.TrimLeft(text, " \t")
-	if !strings.HasPrefix(trimmed, "!") {
-		return "", false
-	}
-	cmd := strings.TrimSpace(strings.TrimPrefix(trimmed, "!"))
-	if cmd == "" {
-		return "", false
-	}
-	return cmd, true
-}
-
-// startShellEscape runs a "!command" in the same shell the bash tool
-// uses, in the session working directory, honoring the /jail sandbox.
-// It shares the busy/cancel state with the agent: esc cancels it, and
-// it refuses to start while a turn or another shell escape is already
-// in flight. The terminal-log output is parked in i.shellBlock below
-// the transcript until the next prompt or /clear, so it never enters
-// the model conversation.
-func (i *Interactive) startShellEscape(parent context.Context, cmd string) {
-	i.mu.Lock()
-	if i.busy || i.shellRunning {
-		i.statusErr = "busy — wait for the current turn to finish before running a shell command"
-		i.statusOK = ""
-		i.mu.Unlock()
-		i.invalidate()
-		return
-	}
-	if parent == nil {
-		parent = i.runCtx
-	}
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithCancel(parent)
-	i.busy = true
-	i.shellRunning = true
-	i.cancelTurn = cancel
-	i.statusErr = ""
-	i.statusOK = ""
-	i.spin.StartFixed("running shell command")
-	// A new shell escape replaces the previous block; clear stale
-	// extension notes the same way a new turn would so the screen
-	// doesn't accumulate transient state.
-	i.shellBlock = nil
-	i.scrollOffset = 0
-	i.parkedTurn = 0
-	i.parkedTotal = 0
-	i.helpBlock = nil
-	sandbox := i.cfg.Sandbox
-	cwd := i.cfg.CWD
-	i.mu.Unlock()
-	i.invalidate()
-
-	go func() {
-		defer cancel()
-		raw, _ := json.Marshal(map[string]any{"command": cmd})
-		bash := &tools.BashTool{CWD: cwd, Sandbox: sandbox}
-		res, err := bash.Execute(ctx, raw, nil)
-
-		var out string
-		if err != nil {
-			out = "$ " + cmd + "\n\n" + err.Error() + "\n\n[error]"
-		} else {
-			for _, c := range res.Content {
-				if tb, ok := c.(provider.TextBlock); ok {
-					out += tb.Text
-				}
-			}
-		}
-		cancelled := ctx.Err() != nil
-		failed := err != nil || res.IsError || cancelled
-		if cancelled {
-			out += "\n\n[cancelled]"
-		}
-
-		block := i.renderShellBlock(out, failed)
-
-		i.mu.Lock()
-		i.shellRunning = false
-		i.busy = false
-		i.cancelTurn = nil
-		i.shellBlock = block
-		if failed {
-			if cancelled {
-				i.statusErr = "shell command cancelled"
-			} else {
-				i.statusErr = "shell command failed"
-			}
-			i.statusOK = ""
-		} else {
-			i.statusOK = "shell command finished"
-			i.statusErr = ""
-		}
-		i.mu.Unlock()
-		i.invalidate()
-	}()
-}
-
-// renderShellBlock turns merged bash output into a styled terminal-log
-// block: each line colored by overall success (tool/green) or failure
-// (error/red), with the [exit ...] / [error] footer dimmed via the
-// muted color so it reads as metadata.
-func (i *Interactive) renderShellBlock(out string, failed bool) []string {
-	th := i.cfg.Theme
-	base := th.Tool
-	if failed {
-		base = th.Error
-	}
-	out = strings.TrimRight(out, "\n")
-	lines := strings.Split(out, "\n")
-	styled := make([]string, 0, len(lines))
-	for _, line := range lines {
-		color := base
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[exit ") || strings.HasPrefix(trimmed, "[error]") || strings.HasPrefix(trimmed, "[cancelled]") {
-			color = th.Muted
-		}
-		styled = append(styled, th.FG256(color, line))
-	}
-	return styled
-}
-
 func (i *Interactive) startTurn(parent context.Context, prompt string) {
 	i.startTurnWithImages(parent, prompt, nil)
 }
@@ -4257,6 +3944,13 @@ func (i *Interactive) startTurn(parent context.Context, prompt string) {
 func (i *Interactive) startTurnWithImages(parent context.Context, prompt string, images []provider.ImageBlock) {
 	if i.agent == nil {
 		return
+	}
+	// Force a full repaint when a new turn begins so any stray dialog,
+	// popup, or stale tool-progress rows don't leak into the visible
+	// chat area before the assistant starts streaming. Equivalent to
+	// the user pressing ctrl+l right before submit.
+	if i.rend != nil {
+		i.rend.Clear()
 	}
 	// Pre-turn safety: if the most recent context measurement is
 	// already past the auto-compact threshold, condense before
@@ -4290,9 +3984,6 @@ func (i *Interactive) startTurnWithImages(parent context.Context, prompt string,
 	i.streamOn = true
 	i.toolCalls = map[string]*tui.ToolCallView{}
 	i.toolOrder = nil
-	i.toolGate = map[string]int{}
-	i.shellBlock = nil // sending a prompt clears any parked shell-escape log
-	i.extNotes = nil   // ext notes are one-shot; a new prompt clears them
 	i.scrollOffset = 0 // jump back to the bottom on new turn
 	// Reset the auto-follow baseline so the very next render at
 	// interactive.go:1053 doesn't see a synthetic shrink between
@@ -4558,7 +4249,6 @@ func (i *Interactive) handleEvent(ev core.AgentEvent) {
 		// will populate fresh entries for this turn's tools.
 		i.toolCalls = map[string]*tui.ToolCallView{}
 		i.toolOrder = nil
-		i.toolGate = map[string]int{}
 	case core.EvTextDelta:
 		// Buffer into streamPending; the paintPace ticker drains
 		// it into i.streaming a few runes at a time for a smooth
@@ -4592,7 +4282,6 @@ func (i *Interactive) handleEvent(ev core.AgentEvent) {
 				Streaming: true,
 			}
 			i.toolOrder = append(i.toolOrder, e.ID)
-			i.gateToolLocked(e.ID)
 		}
 	case core.EvToolUseArgs:
 		if tc, ok := i.toolCalls[e.ID]; ok {
@@ -4624,7 +4313,6 @@ func (i *Interactive) handleEvent(ev core.AgentEvent) {
 				Args: tui.ShortArgs(e.Name, e.Args),
 			}
 			i.toolOrder = append(i.toolOrder, e.ID)
-			i.gateToolLocked(e.ID)
 		}
 	case core.EvToolResult:
 		if tc, ok := i.toolCalls[e.ID]; ok {
@@ -5559,55 +5247,6 @@ func (i *Interactive) resetStreamingStateLocked() {
 	i.streamPending = i.streamPending[:0]
 	i.streamFlushPending = false
 	i.streamOn = false
-	i.openAllToolGatesLocked()
-}
-
-// openAllToolGatesLocked drops every pending tool gate so that any
-// tool registered during this turn renders unconditionally from now
-// on. Called when streaming finalizes (the paced text has fully
-// drained and `streaming` is about to reset to length 0): without
-// this, the gate comparison against a freshly-reset streaming buffer
-// would wrongly re-hide tools that had already cleared their gate.
-// Must be called with i.mu held.
-func (i *Interactive) openAllToolGatesLocked() {
-	for id := range i.toolGate {
-		i.toolGate[id] = 0
-	}
-}
-
-// gateToolLocked records the stream position at which a tool call may
-// become visible. The gate is the total length the streaming buffer
-// will reach once the pacer has drained everything currently queued
-// (already painted + still pending). Holding the tool block back
-// until the pacer crosses that mark guarantees the prose emitted
-// before the tool call finishes typing out above it, instead of the
-// tool block snapping in while the paragraph is still filling in.
-//
-// We only gate while text is actively streaming. If no stream is in
-// flight (gate 0), the tool shows immediately, which is the correct
-// behaviour for tool-only turns and replayed sessions. First
-// registration wins so a later EvToolCall can't move an existing
-// gate. Must be called with i.mu held.
-func (i *Interactive) gateToolLocked(id string) {
-	if _, ok := i.toolGate[id]; ok {
-		return
-	}
-	if !i.streamOn {
-		i.toolGate[id] = 0
-		return
-	}
-	i.toolGate[id] = i.streaming.Len() + len(i.streamPending)
-}
-
-// toolGateOpenLocked reports whether the gated tool block may render
-// yet, i.e. the pacer has drained enough text to reach the position
-// recorded when the tool call arrived. Must be called with i.mu held.
-func (i *Interactive) toolGateOpenLocked(id string) bool {
-	gate, ok := i.toolGate[id]
-	if !ok || gate == 0 {
-		return true
-	}
-	return i.streaming.Len() >= gate
 }
 
 // assistantMessageSideEffects runs the non-visual hooks attached to
@@ -5680,7 +5319,6 @@ func (i *Interactive) runStreamPacer(ctx context.Context) {
 					i.streamFlushPending = false
 					i.streaming.Reset()
 					i.streamOn = false
-					i.openAllToolGatesLocked()
 					i.mu.Unlock()
 					i.invalidate()
 					continue
