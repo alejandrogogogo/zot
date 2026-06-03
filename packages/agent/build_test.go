@@ -108,3 +108,37 @@ func TestResolveExplicitFlagStaleDoesNotRepairConfig(t *testing.T) {
 		t.Errorf("config.json was clobbered (was %q; now %q)", good, cfg.Model)
 	}
 }
+
+func TestCanonicalProviderResolvesAliases(t *testing.T) {
+	cases := map[string]string{
+		"bedrock":         "amazon-bedrock",
+		"AWS-Bedrock":     "amazon-bedrock",
+		"  bedrock  ":     "amazon-bedrock",
+		"vertex":          "google-vertex",
+		"gemini":          "google",
+		"azure":           "azure-openai-responses",
+		"copilot":         "github-copilot",
+		"codex":           "openai-codex",
+		"moonshot":        "moonshotai",
+		"vercel":          "vercel-ai-gateway",
+		"hf":              "huggingface",
+		"anthropic":       "anthropic",       // canonical passes through
+		"amazon-bedrock":  "amazon-bedrock",  // already canonical
+		"totally-unknown": "totally-unknown", // unknown returned unchanged (lowered)
+		"Totally-UNKNOWN": "totally-unknown",
+		"":                "",
+	}
+	for in, want := range cases {
+		if got := canonicalProvider(in); got != want {
+			t.Errorf("canonicalProvider(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCanonicalProviderAliasesAreKnown(t *testing.T) {
+	for alias, canon := range providerAliases {
+		if !isKnownProvider(canon) {
+			t.Errorf("alias %q maps to %q which is not a known provider", alias, canon)
+		}
+	}
+}
