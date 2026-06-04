@@ -263,8 +263,35 @@ func (v *View) BuildLive(width int) []string {
 		// out = append(out, "")
 	}
 	if v.Err != "" {
-		out = append(out, v.Theme.FG256(v.Theme.Error, "✖ "+v.Err))
+		out = append(out, v.renderErr(width)...)
 		// out = append(out, "")
+	}
+	return out
+}
+
+// renderErr formats v.Err into one or more colored rows, word-wrapped
+// to width so long provider error messages (e.g. a Bedrock 400 with an
+// embedded JSON body) aren't cut off at the terminal edge. The first
+// row carries the "✖ " marker; continuation rows align under the text
+// with a two-cell indent.
+func (v *View) renderErr(width int) []string {
+	const marker = "✖ "
+	const indent = "  "
+	wrapWidth := width - len([]rune(marker))
+	if wrapWidth < 8 {
+		wrapWidth = 8
+	}
+	wrapped := wrapLine(v.Err, wrapWidth, "")
+	if len(wrapped) == 0 {
+		wrapped = []string{""}
+	}
+	out := make([]string, 0, len(wrapped))
+	for idx, line := range wrapped {
+		prefix := marker
+		if idx > 0 {
+			prefix = indent
+		}
+		out = append(out, v.Theme.FG256(v.Theme.Error, prefix+line))
 	}
 	return out
 }
@@ -388,7 +415,7 @@ func (v *View) BuildWithAnchors(width int) ([]string, []MessageAnchor) {
 		out = append(out, "")
 	}
 	if v.Err != "" {
-		out = append(out, v.Theme.FG256(v.Theme.Error, "✖ "+v.Err))
+		out = append(out, v.renderErr(width)...)
 		out = append(out, "")
 	}
 	return out, anchors
