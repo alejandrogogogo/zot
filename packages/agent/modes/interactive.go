@@ -1061,19 +1061,20 @@ func (i *Interactive) redraw() {
 	// from the chat below, instead of the diff path leaving stale
 	// dialog content behind. Equivalent to the user pressing ctrl+l.
 	overlayOpen := len(dialog) > 0 || len(suggest) > 0
-	if i.rend != nil && i.prevOverlayOpen != overlayOpen {
-		// VS Code's terminal keeps scrollback (no \x1b[3J), so the
-		// diff path leaves stale rows behind when the slash/file popup
-		// opens AND when it closes. Force a full repaint on both
-		// transitions there, using Invalidate so we don't trigger VS
-		// Code's viewport-snap the way Clear would. Other terminals
-		// only need the close-transition Clear (the open paint is
-		// clean because scrollback was wiped).
-		if i.rend.KeepsScrollback() {
-			i.rend.Invalidate()
-		} else if i.prevOverlayOpen && !overlayOpen {
-			i.rend.Clear()
-		}
+	if i.rend != nil && i.prevOverlayOpen && !overlayOpen {
+		// An overlay (dialog or slash/file popup) just closed, so the
+		// bottom band shrinks. On terminals where we can drop
+		// scrollback, a full Clear is the simplest way to guarantee
+		// the vacated rows are repainted from the chat below.
+		//
+		// On VS Code's terminal closing a dialog leaves the stale
+		// overlay rows in the retained scrollback (we can't drop them
+		// with the quiet in-place diff). Run the same full Clear() that
+		// Ctrl+L uses so the scrollback is purged and the conversation
+		// is repainted clean, matching what the user expects after
+		// dismissing a picker. Clear() is keepScrollback-aware and
+		// emits \x1b[3J there.
+		i.rend.Clear()
 	}
 	i.prevOverlayOpen = overlayOpen
 	if len(suggest) > 0 {
@@ -1651,6 +1652,12 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		if act.Select {
 			i.applySessionSelection(act.Path)
 		}
+		// Always request a redraw after handling a key here: when esc
+		// closes the picker, the overlay-close detection in the render
+		// pass needs to run so the tall dialog rows get repainted from
+		// the chat (otherwise VS Code's retained scrollback leaves a
+		// duplicate frame on screen).
+		i.invalidate()
 		return false
 	}
 	if i.swarmDialog.Active() {
