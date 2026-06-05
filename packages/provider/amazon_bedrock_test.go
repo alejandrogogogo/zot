@@ -81,3 +81,61 @@ func TestReadAWSCredentialsFile(t *testing.T) {
 		t.Logf("no aws creds available (expected on CI): %v", err)
 	}
 }
+
+func TestBedrockEventPayloadHelpers(t *testing.T) {
+	wrapped := []byte(`{"contentBlockDelta":{"contentBlockIndex":0,"delta":{"text":"Hello"}}}`)
+	if got := bedrockEventTypeFromPayload(wrapped); got != "contentBlockDelta" {
+		t.Fatalf("event type = %q, want contentBlockDelta", got)
+	}
+	var delta struct {
+		ContentBlockIndex int `json:"contentBlockIndex"`
+		Delta             struct {
+			Text string `json:"text"`
+		} `json:"delta"`
+	}
+	if err := unmarshalBedrockEventPayload(wrapped, "contentBlockDelta", &delta); err != nil {
+		t.Fatal(err)
+	}
+	if delta.ContentBlockIndex != 0 || delta.Delta.Text != "Hello" {
+		t.Fatalf("unexpected wrapped delta: %+v", delta)
+	}
+
+	direct := []byte(`{"contentBlockIndex":1,"delta":{"text":"world"}}`)
+	if err := unmarshalBedrockEventPayload(direct, "contentBlockDelta", &delta); err != nil {
+		t.Fatal(err)
+	}
+	if delta.ContentBlockIndex != 1 || delta.Delta.Text != "world" {
+		t.Fatalf("unexpected direct delta: %+v", delta)
+	}
+}
+
+func TestResolveBedrockInferenceProfileID(t *testing.T) {
+	cases := []struct {
+		model  string
+		region string
+		want   string
+	}{
+		// Bare Anthropic foundation IDs get the region-matched prefix.
+		{"anthropic.claude-sonnet-4-5-20250929-v1:0", "us-east-1", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
+		{"anthropic.claude-sonnet-4-5-20250929-v1:0", "eu-central-1", "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"},
+		{"anthropic.claude-opus-4-6-v1", "ap-southeast-2", "apac.anthropic.claude-opus-4-6-v1"},
+		{"anthropic.claude-opus-4-6-v1", "us-gov-west-1", "us-gov.anthropic.claude-opus-4-6-v1"},
+		{"deepseek.r1-v1:0", "eu-west-1", "eu.deepseek.r1-v1:0"},
+		// Empty region defaults to us.
+		{"anthropic.claude-opus-4-6-v1", "", "us.anthropic.claude-opus-4-6-v1"},
+		// Already-prefixed IDs are left untouched.
+		{"eu.anthropic.claude-sonnet-4-5-20250929-v1:0", "us-east-1", "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"},
+		{"global.anthropic.claude-opus-4-6-v1", "us-east-1", "global.anthropic.claude-opus-4-6-v1"},
+		{"us.anthropic.claude-opus-4-6-v1", "eu-central-1", "us.anthropic.claude-opus-4-6-v1"},
+		// ARNs are passed through verbatim.
+		{"arn:aws:bedrock:us-east-1:123:inference-profile/us.anthropic.claude-opus-4-6-v1", "eu-west-1", "arn:aws:bedrock:us-east-1:123:inference-profile/us.anthropic.claude-opus-4-6-v1"},
+		// Families that don't need a profile are untouched.
+		{"amazon.nova-pro-v1:0", "us-east-1", "amazon.nova-pro-v1:0"},
+		{"", "us-east-1", ""},
+	}
+	for _, c := range cases {
+		if got := resolveBedrockInferenceProfileID(c.model, c.region); got != c.want {
+			t.Errorf("resolveBedrockInferenceProfileID(%q, %q) = %q; want %q", c.model, c.region, got, c.want)
+		}
+	}
+}
