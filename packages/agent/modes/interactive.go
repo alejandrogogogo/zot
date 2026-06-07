@@ -2356,6 +2356,36 @@ func (i *Interactive) Notify(extName, level, message string) {
 	i.invalidate()
 }
 
+// ClearNotes removes every note line owned by extName from the
+// bottom-sticky ext-notes block. Extensions use this to retract a
+// transient status line (e.g. an approval prompt) once it no longer
+// applies, instead of leaving it stacked forever. Notes from other
+// extensions and internal notes (auto-compact) are left untouched.
+func (i *Interactive) ClearNotes(extName string) {
+	marker := "[" + extName + "] "
+	i.mu.Lock()
+	if len(i.extNotes) == 0 {
+		i.mu.Unlock()
+		return
+	}
+	kept := i.extNotes[:0:0]
+	changed := false
+	for _, line := range i.extNotes {
+		if strings.Contains(line, marker) {
+			changed = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if changed {
+		i.extNotes = kept
+	}
+	i.mu.Unlock()
+	if changed {
+		i.invalidate()
+	}
+}
+
 // Submit feeds text through the agent loop as if the user had typed it.
 func (i *Interactive) Submit(text string) {
 	if cmd, ok := shellEscapeCommand(text); ok {
@@ -4237,6 +4267,7 @@ func (i *Interactive) startTurnWithImages(parent context.Context, prompt string,
 	i.toolCalls = map[string]*tui.ToolCallView{}
 	i.toolOrder = nil
 	i.shellBlock = nil // sending a prompt clears any parked shell-escape log
+	i.extNotes = nil   // ext notes are one-shot; a new prompt clears them
 	i.scrollOffset = 0 // jump back to the bottom on new turn
 	// Reset the auto-follow baseline so the very next render at
 	// interactive.go:1053 doesn't see a synthetic shrink between
