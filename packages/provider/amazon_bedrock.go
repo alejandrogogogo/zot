@@ -194,6 +194,13 @@ type bedrockMessage struct {
 	Content []map[string]interface{} `json:"content"`
 }
 
+// bedrockCachePoint is the Converse API cache checkpoint content block.
+// Appending this to a system or message content array tells Bedrock to
+// create a cache boundary at that position in the prompt prefix.
+var bedrockCachePoint = map[string]interface{}{
+	"cachePoint": map[string]interface{}{"type": "default"},
+}
+
 type bedrockToolSpec struct {
 	ToolSpec struct {
 		Name        string `json:"name"`
@@ -205,8 +212,8 @@ type bedrockToolSpec struct {
 }
 
 type bedrockRequest struct {
-	Messages        []bedrockMessage    `json:"messages"`
-	System          []map[string]string `json:"system,omitempty"`
+	Messages        []bedrockMessage         `json:"messages"`
+	System          []map[string]interface{} `json:"system,omitempty"`
 	InferenceConfig struct {
 		MaxTokens   int      `json:"maxTokens,omitempty"`
 		Temperature *float32 `json:"temperature,omitempty"`
@@ -271,10 +278,62 @@ func normalizeBedrockToolResults(msgs []Message) []Message {
 	return out
 }
 
+// bedrockModelSupportsCaching reports whether the resolved model ID
+// supports explicit prompt caching via cachePoint markers on Bedrock.
+// We use PriceCacheWrite > 0 as a proxy: every Bedrock-hosted Claude
+// model with a write price in the catalog supports cachePoint markers.
+// Nova models use automatic caching and don't need explicit markers.
+func bedrockModelSupportsCaching(modelID string) bool {
+	// Strip geo prefix (us./eu./apac./au./global.) before catalog lookup.
+	for _, p := range bedrockGeoPrefixes {
+		if strings.HasPrefix(modelID, p+".") {
+			modelID = modelID[len(p)+1:]
+			break
+		}
+	}
+	if m, err := FindModel("amazon-bedrock", modelID); err == nil {
+		return m.PriceCacheWrite > 0
+	}
+	// Unknown model: enable for Anthropic Claude families — cachePoint is
+	// silently ignored by the API if the model doesn't support it.
+	return strings.HasPrefix(modelID, "anthropic.claude-")
+}
+
+// bedrockMessagesHaveToolBlocks reports whether any message in msgs
+// contains a toolUse or toolResult content block. Bedrock's Converse API
+// rejects the request with HTTP 400 if those block types are present but
+// toolConfig is absent.
+func bedrockMessagesHaveToolBlocks(msgs []bedrockMessage) bool {
+	for _, m := range msgs {
+		for _, c := range m.Content {
+			if _, ok := c["toolUse"]; ok {
+				return true
+			}
+			if _, ok := c["toolResult"]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (c *bedrockClient) buildRequest(req Request) (*bedrockRequest, error) {
 	out := &bedrockRequest{}
+
+	// Resolve the model ID as it will appear on the wire so the caching
+	// check operates on the same ID used for FindModel.
+	resolvedModel := resolveBedrockInferenceProfileID(req.Model, c.region)
+	caching := bedrockModelSupportsCaching(resolvedModel)
+
 	if req.System != "" {
-		out.System = []map[string]string{{"text": req.System}}
+		sysBlock := map[string]interface{}{"text": req.System}
+		if caching {
+			// Append cachePoint after the system text so the stable system
+			// prompt is cached as the first breakpoint.
+			out.System = []map[string]interface{}{sysBlock, bedrockCachePoint}
+		} else {
+			out.System = []map[string]interface{}{sysBlock}
+		}
 	}
 	out.InferenceConfig.Temperature = req.Temperature
 	out.InferenceConfig.MaxTokens = req.MaxTokens
@@ -339,8 +398,43 @@ func (c *bedrockClient) buildRequest(req Request) (*bedrockRequest, error) {
 			tc.Tools = append(tc.Tools, ts)
 		}
 		out.ToolConfig = &tc
+	} else if bedrockMessagesHaveToolBlocks(out.Messages) {
+		// Bedrock requires toolConfig to be present whenever the message
+		// history contains toolUse or toolResult content blocks, even if
+		// the current request does not intend to call any tools (e.g. the
+		// /btw side-chat sends the frozen main transcript which may include
+		// prior tool turns). Inject a stub tool so the API accepts the
+		// request; it will never be invoked since no tool_use stop reason
+		// can be triggered when the real tool list is empty.
+		var stub bedrockToolSpec
+		stub.ToolSpec.Name = "_placeholder"
+		stub.ToolSpec.Description = "placeholder required by Bedrock when tool history is present"
+		stub.ToolSpec.InputSchema.JSON = json.RawMessage(`{"type":"object","properties":{}}`)
+		out.ToolConfig = &struct {
+			Tools []bedrockToolSpec `json:"tools"`
+		}{Tools: []bedrockToolSpec{stub}}
 	}
+
+	if caching {
+		// Tag the last user message with a cachePoint. This extends the
+		// cached prefix to cover the full conversation history up to the
+		// current turn, so the next turn reads that history cheaply.
+		bedrockTagLastUserCache(out.Messages)
+	}
+
 	return out, nil
+}
+
+// bedrockTagLastUserCache appends a cachePoint block to the last user
+// message in the Bedrock message list. It is the Bedrock equivalent of
+// Anthropic's cache_control:{type:"ephemeral"} on the last user message.
+func bedrockTagLastUserCache(msgs []bedrockMessage) {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			msgs[i].Content = append(msgs[i].Content, bedrockCachePoint)
+			return
+		}
+	}
 }
 
 // resolveBedrockInferenceProfileID maps a bare foundation-model ID to
