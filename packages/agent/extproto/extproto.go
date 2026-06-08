@@ -102,7 +102,7 @@ type PanelSpec struct {
 // CommandResponseFromExt, this form is uncoupled from any command invocation
 // and may be sent from a tool handler goroutine or any background context.
 type OpenPanelFromExt struct {
-	Type  string    `json:"type"`  // "open_panel"
+	Type  string    `json:"type"` // "open_panel"
 	Panel PanelSpec `json:"panel"`
 }
 
