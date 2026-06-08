@@ -184,9 +184,7 @@ func (c *openaiClient) buildRequest(req Request) (*oaiRequest, error) {
 		maxTok = m.MaxOutput
 	}
 	if m.Reasoning {
-		if maxTok > 0 {
-			out.MaxCompletionTok = &maxTok
-		}
+		out.MaxCompletionTok = &maxTok
 		effort := OpenAIReasoningEffort(req.Reasoning)
 		if usesAdaptiveThinking(m) {
 			// Some gateways expose adaptive-thinking Anthropic models through
@@ -198,10 +196,7 @@ func (c *openaiClient) buildRequest(req Request) (*oaiRequest, error) {
 		if effort != "" {
 			out.ReasoningEffort = effort
 		}
-	} else if maxTok > 0 {
-		// Omit max_tokens when unknown (some discovered models don't
-		// advertise an output cap) so the server applies its own default
-		// instead of receiving an invalid max_tokens: 0.
+	} else {
 		out.MaxTokens = &maxTok
 	}
 
