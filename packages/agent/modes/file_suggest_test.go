@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -96,4 +97,99 @@ func (b byDirsFirst) Less(i, j int) bool {
 		return b[i].isDir
 	}
 	return b[i].name < b[j].name
+}
+
+// TestFileSuggesterFuzzyMatch verifies the @-query ranks entries with
+// a fuzzy subsequence match rather than a plain substring, so a
+// non-contiguous pattern like "fsg" still finds "file_suggest.go".
+func TestFileSuggesterFuzzyMatch(t *testing.T) {
+	tmp := t.TempDir()
+	for _, name := range []string{"file_suggest.go", "interactive.go", "README.md"} {
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := newFileSuggester()
+	s.SetCWD(tmp)
+
+	got := s.matches("@fsg")
+	if !containsEntry(got, "file_suggest.go", false) {
+		t.Fatalf("fuzzy query @fsg did not match file_suggest.go: %#v", got)
+	}
+	if len(got) == 0 || got[0].name != "file_suggest.go" {
+		t.Fatalf("file_suggest.go not ranked first for @fsg: %#v", got)
+	}
+}
+
+// TestFileSuggesterRecursiveMatch verifies recursive mode flattens the
+// tree and matches against the cwd-relative path, so a pattern can
+// span directory boundaries.
+func TestFileSuggesterRecursiveMatch(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "src", "foo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "src", "foo", "bar.go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := newFileSuggester()
+	s.SetCWD(tmp)
+	s.SetRecursive(true)
+
+	rel := filepath.Join("src", "foo", "bar.go")
+	got := s.matches("@foobar")
+	if !containsEntry(got, rel, false) {
+		t.Fatalf("recursive @foobar did not match %s: %#v", rel, got)
+	}
+}
+
+// TestFileSuggesterRecursiveSkipsHeavyDirs ensures the walk prunes
+// directories like .git that would otherwise dominate the budget.
+func TestFileSuggesterRecursiveSkipsHeavyDirs(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".git", "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".git", "objects", "deadbeef"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "main.go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := newFileSuggester()
+	s.SetCWD(tmp)
+	s.SetRecursive(true)
+
+	all := s.scan()
+	for _, e := range all {
+		if e.rel == ".git" || strings.HasPrefix(e.rel, ".git"+string(filepath.Separator)) {
+			t.Fatalf("recursive scan descended into .git: %#v", e)
+		}
+	}
+	if !containsEntry(all, "main.go", false) {
+		t.Fatalf("recursive scan missing main.go: %#v", all)
+	}
+}
+
+// TestFileSuggesterToggleResetsCache verifies SetRecursive drops the
+// cached scan so the next matches() reflects the new mode.
+func TestFileSuggesterToggleResetsCache(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "pkg", "nested.go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := newFileSuggester()
+	s.SetCWD(tmp)
+
+	rel := filepath.Join("pkg", "nested.go")
+	if containsEntry(s.matches("@nested"), rel, false) {
+		t.Fatal("flat mode unexpectedly saw nested.go")
+	}
+	s.SetRecursive(true)
+	if !containsEntry(s.matches("@nested"), rel, false) {
+		t.Fatal("recursive mode did not surface nested.go after toggle")
+	}
 }

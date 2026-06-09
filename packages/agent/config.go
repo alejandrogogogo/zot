@@ -32,6 +32,12 @@ type Config struct {
 	// default; nil/missing means disabled. Toggle from /settings.
 	AutoSwarmEnabled *bool `json:"auto_swarm_enabled,omitempty"`
 
+	// RecursiveFileSuggest controls the @-mention file picker. When true
+	// the picker fuzzy-searches the whole project tree below the working
+	// directory; nil/missing/false keeps the default directory-by-
+	// directory browse. Toggle from /settings.
+	RecursiveFileSuggest *bool `json:"recursive_file_suggest,omitempty"`
+
 	// LastChangelogShown is the version whose release-notes
 	// dialog the user has already seen. When the running binary's
 	// version differs, the next interactive run shows the
