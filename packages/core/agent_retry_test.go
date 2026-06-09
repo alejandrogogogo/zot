@@ -109,3 +109,38 @@ func TestAgentDropsPartialAssistantBeforeRetry(t *testing.T) {
 		t.Fatalf("final assistant text = %q; want recovered", got)
 	}
 }
+
+// captureClient records the last Request it received so tests can
+// assert what the agent put on the wire.
+type captureClient struct {
+	lastReq provider.Request
+}
+
+func (c *captureClient) Name() string { return "capture" }
+
+func (c *captureClient) Stream(ctx context.Context, req provider.Request) (<-chan provider.Event, error) {
+	c.lastReq = req
+	out := make(chan provider.Event, 3)
+	go func() {
+		defer close(out)
+		out <- provider.EventStart{Provider: "capture", Model: req.Model}
+		out <- provider.EventDone{Stop: provider.StopEnd, Message: provider.Message{
+			Role:    provider.RoleAssistant,
+			Content: []provider.Content{provider.TextBlock{Text: "ok"}},
+		}}
+	}()
+	return out, nil
+}
+
+func TestAgentPropagatesMaxTokens(t *testing.T) {
+	client := &captureClient{}
+	a := NewAgent(client, "fake-model", "system", Registry{})
+	a.MaxTokens = 64000
+
+	if err := a.Prompt(context.Background(), "hello", nil, nil); err != nil {
+		t.Fatalf("Prompt returned %v", err)
+	}
+	if client.lastReq.MaxTokens != 64000 {
+		t.Fatalf("request MaxTokens = %d; want 64000 (Agent.MaxTokens not propagated)", client.lastReq.MaxTokens)
+	}
+}

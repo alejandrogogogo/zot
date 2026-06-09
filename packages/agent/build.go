@@ -32,6 +32,13 @@ type Resolved struct {
 	MaxSteps     int
 	Sandbox      *tools.Sandbox
 
+	// MaxOutput is the resolved model's maximum output-token budget
+	// (from the catalog). Passed to the agent so each turn requests
+	// the model's full output capacity instead of the provider's
+	// conservative default (e.g. Bedrock's 4096, which truncates
+	// long writes/edits with stopReason=length).
+	MaxOutput int
+
 	// SkillTool is the on-demand skill loader registered with the
 	// agent's tool registry, or nil if no SKILL.md files were
 	// discovered. Exposed so the tui can list / preview skills.
@@ -501,6 +508,7 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 		ToolSummary:      summaries,
 		SystemPrompt:     sys,
 		MaxSteps:         max,
+		MaxOutput:        resolvedModel.MaxOutput,
 		Sandbox:          sandbox,
 		SkillTool:        skillTool,
 		systemAppend:     append_,
@@ -768,6 +776,7 @@ func (r *Resolved) UseSandbox(s *tools.Sandbox) {
 func (r Resolved) NewAgent() *core.Agent {
 	a := core.NewAgent(r.NewClient(), r.Model, r.SystemPrompt, r.ToolRegistry)
 	a.MaxSteps = r.MaxSteps
+	a.MaxTokens = r.MaxOutput
 	a.Reasoning = r.Reasoning
 	return a
 }

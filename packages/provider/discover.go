@@ -284,7 +284,7 @@ func DiscoverOpenRouter(ctx context.Context, baseURL string) ([]Model, error) {
 			display = d.ID
 		}
 		ctxWin := d.ContextLength
-		if d.TopProvider.ContextLength > 0 && (ctxWin == 0 || d.TopProvider.ContextLength < ctxWin) {
+		if ctxWin == 0 {
 			ctxWin = d.TopProvider.ContextLength
 		}
 		maxOut := 0
