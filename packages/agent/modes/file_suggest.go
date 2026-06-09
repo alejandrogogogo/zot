@@ -41,8 +41,13 @@ type fileSuggester struct {
 	// directory-by-directory browsing. Mirrors the persisted
 	// recursive_file_suggest setting; toggled live from /settings.
 	recursive bool
-	cachedDir string // absolute directory we last scanned
-	cachedAll []fileEntry
+	// respectGitignore drops entries matched by the project's root
+	// .gitignore (and always .git) from both the flat and recursive
+	// listings. Mirrors the persisted respect_gitignore setting; on by
+	// default. Toggled live from /settings.
+	respectGitignore bool
+	cachedDir        string // absolute directory we last scanned
+	cachedAll        []fileEntry
 	// cachedMTime is the mtime of cachedDir at the time of the scan.
 	// scan() compares the current mtime against this on every call and
 	// re-reads the directory if it has changed, so files or folders
@@ -58,7 +63,10 @@ type fileEntry struct {
 	isDir bool
 }
 
-func newFileSuggester() *fileSuggester { return &fileSuggester{} }
+// newFileSuggester returns a picker that respects .gitignore by
+// default. Callers override via SetRespectGitignore once the persisted
+// setting is known.
+func newFileSuggester() *fileSuggester { return &fileSuggester{respectGitignore: true} }
 
 // SetCWD updates the project root.
 func (s *fileSuggester) SetCWD(cwd string) {
@@ -79,6 +87,18 @@ func (s *fileSuggester) SetRecursive(on bool) {
 	}
 	s.recursive = on
 	s.browseRel = ""
+	s.cachedDir = ""
+	s.cachedAll = nil
+	s.cursor = 0
+}
+
+// SetRespectGitignore toggles .gitignore filtering for both modes.
+// Switching drops the cache so the next scan reflects the new state.
+func (s *fileSuggester) SetRespectGitignore(on bool) {
+	if s.respectGitignore == on {
+		return
+	}
+	s.respectGitignore = on
 	s.cachedDir = ""
 	s.cachedAll = nil
 	s.cursor = 0
@@ -116,12 +136,24 @@ func (s *fileSuggester) scan() []fileEntry {
 	if err != nil {
 		return nil
 	}
+	var ig *ignore.Gitignore
+	if s.respectGitignore {
+		ig = ignore.Load(s.cwd)
+	}
 	var all []fileEntry
 	for _, e := range entries {
 		name := e.Name()
 		rel := name
 		if s.browseRel != "" {
 			rel = filepath.Join(s.browseRel, name)
+		}
+		if s.respectGitignore {
+			if e.IsDir() && name == alwaysSkipDir {
+				continue
+			}
+			if ig.Match(filepath.ToSlash(rel), e.IsDir()) {
+				continue
+			}
 		}
 		all = append(all, fileEntry{
 			name:  name,
@@ -163,7 +195,10 @@ func (s *fileSuggester) scanRecursive() []fileEntry {
 		return s.cachedAll
 	}
 
-	ig := ignore.Load(root)
+	var ig *ignore.Gitignore
+	if s.respectGitignore {
+		ig = ignore.Load(root)
+	}
 	var all []fileEntry
 	rootSep := strings.Count(root, string(os.PathSeparator))
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -180,14 +215,19 @@ func (s *fileSuggester) scanRecursive() []fileEntry {
 		if relErr != nil {
 			return nil
 		}
-		// .gitignore patterns are matched against slash-separated paths.
-		if ig.Match(filepath.ToSlash(rel), d.IsDir()) {
-			if d.IsDir() {
-				return filepath.SkipDir
+		if s.respectGitignore {
+			// .gitignore patterns are matched against slash-separated paths.
+			if ig.Match(filepath.ToSlash(rel), d.IsDir()) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
 			}
-			return nil
 		}
 		if d.IsDir() {
+			// .git is always pruned: it's never a useful @-mention target
+			// and would otherwise blow the entry budget even when
+			// gitignore filtering is off.
 			if d.Name() == alwaysSkipDir {
 				return filepath.SkipDir
 			}
