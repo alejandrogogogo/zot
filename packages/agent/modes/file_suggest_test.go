@@ -79,6 +79,61 @@ func TestFileSuggesterPicksUpNewEntries(t *testing.T) {
 	}
 }
 
+// TestFileSuggesterRecursiveHonorsNestedGitignore reproduces the
+// reported bug: a vendored tool directory (.opencode) carries its own
+// .gitignore that excludes node_modules, but the repo root .gitignore
+// says nothing about it. Before nested .gitignore support the
+// recursive walk surfaced thousands of node_modules files and a deeply
+// nested real source file (eda/rjg/enk-1150/pipeline.py) could not be
+// found. The walk must prune the nested-ignored tree and surface the
+// deep file.
+func TestFileSuggesterRecursiveHonorsNestedGitignore(t *testing.T) {
+	tmp := t.TempDir()
+	// Root .gitignore knows nothing about node_modules.
+	if err := os.WriteFile(filepath.Join(tmp, ".gitignore"), []byte("dist/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// .opencode/.gitignore ignores its own node_modules.
+	opencodeNM := filepath.Join(tmp, ".opencode", "node_modules", "zod", "src")
+	if err := os.MkdirAll(opencodeNM, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".opencode", ".gitignore"), []byte("node_modules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(opencodeNM, "pipeline.test.ts"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The deeply nested real file the user is hunting for.
+	deep := filepath.Join(tmp, "eda", "rjg", "enk-1150")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deep, "pipeline.py"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newFileSuggester()
+	s.SetCWD(tmp)
+	s.SetRecursive(true)
+
+	all := s.scan()
+	for _, e := range all {
+		if strings.Contains(filepath.ToSlash(e.rel), "node_modules") {
+			t.Fatalf("recursive scan surfaced nested-gitignored node_modules: %#v", e)
+		}
+	}
+	rel := filepath.Join("eda", "rjg", "enk-1150", "pipeline.py")
+	if !containsEntry(all, rel, false) {
+		t.Fatalf("recursive scan missing deep pipeline.py: %#v", all)
+	}
+	// The fuzzy query should now find the real file.
+	got := s.matches("@pipeline.py")
+	if !containsEntry(got, rel, false) {
+		t.Fatalf("@pipeline.py did not match the deep file: %#v", got)
+	}
+}
+
 func containsEntry(entries []fileEntry, name string, isDir bool) bool {
 	for _, e := range entries {
 		if e.name == name && e.isDir == isDir {
