@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/patriceckhart/zot/packages/provider"
 )
 
 // PortableExt is the filesystem extension used for exported sessions.
@@ -321,42 +322,75 @@ func BranchSession(parentPath, root, cwd, version string, upToMessageIdx int) (s
 		return "", err
 	}
 
-	// Copy message rows up to the cut point, plus all usage rows
-	// that land before the cut (they describe the cost of those
-	// messages). Rewind and use the large-row-safe JSONL reader.
+	// Reconstruct the effective transcript the same way OpenSession
+	// does: message rows append, and compaction rows replace everything
+	// before them. The fork index is defined over that effective stream,
+	// not over the raw audit rows kept on disk before a compaction.
 	if _, err := src.Seek(0, io.SeekStart); err != nil {
 		return "", fmt.Errorf("branch: rewind parent: %w", err)
 	}
-	msgCount := 0
+	var effective []provider.Message
+	var nonCompactedRows [][]byte
+	effectiveCount := 0
+	sawCompaction := false
 	if err := forEachJSONLLine(src, func(line []byte) error {
-		if msgCount >= upToMessageIdx {
-			return io.EOF
-		}
 		var h sessionLineHead
 		if err := json.Unmarshal(line, &h); err != nil {
 			return nil
 		}
 		switch h.Type {
 		case "message":
-			if _, err := bw.Write(line); err != nil {
-				return err
+			if msg, err := hydrateMessage(line); err == nil && len(msg.Content) > 0 {
+				effective = append(effective, msg)
+				if !sawCompaction && effectiveCount < upToMessageIdx {
+					raw := append([]byte(nil), line...)
+					nonCompactedRows = append(nonCompactedRows, raw)
+				}
+				effectiveCount++
 			}
-			if err := bw.WriteByte('\n'); err != nil {
-				return err
+		case "compaction":
+			if compacted, err := hydrateCompaction(line); err == nil {
+				effective = compacted
+				effectiveCount = len(effective)
+				sawCompaction = true
 			}
-			msgCount++
 		case "usage":
-			if _, err := bw.Write(line); err != nil {
-				return err
+			if !sawCompaction && effectiveCount < upToMessageIdx {
+				raw := append([]byte(nil), line...)
+				nonCompactedRows = append(nonCompactedRows, raw)
 			}
-			if err := bw.WriteByte('\n'); err != nil {
-				return err
-			}
-			// don't increment msgCount for usage rows
 		}
 		return nil
 	}); err != nil && err != io.EOF {
 		return "", fmt.Errorf("branch: read parent: %w", err)
+	}
+	if sawCompaction {
+		limit := upToMessageIdx
+		if limit > len(effective) {
+			limit = len(effective)
+		}
+		for i := 0; i < limit; i++ {
+			msg := effective[i]
+			line, err := json.Marshal(sessionLine{Type: "message", Message: &msg})
+			if err != nil {
+				return "", fmt.Errorf("branch: marshal message: %w", err)
+			}
+			if _, err := bw.Write(line); err != nil {
+				return "", err
+			}
+			if err := bw.WriteByte('\n'); err != nil {
+				return "", err
+			}
+		}
+	} else {
+		for _, row := range nonCompactedRows {
+			if _, err := bw.Write(row); err != nil {
+				return "", err
+			}
+			if err := bw.WriteByte('\n'); err != nil {
+				return "", err
+			}
+		}
 	}
 	if err := bw.Flush(); err != nil {
 		return "", err
