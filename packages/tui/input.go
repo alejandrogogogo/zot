@@ -342,9 +342,22 @@ func keyFromModifiedCode(code, mod int) (Key, bool) {
 	shift := bits&1 != 0
 	alt := bits&2 != 0
 	ctrl := bits&4 != 0
+	// Kitty keyboard protocol (CSI ... u) reports control keys as their
+	// codepoints: Esc=27, Enter=13, Tab=9, Backspace=127. Without the
+	// enhanced-mode handling these arrive as raw bytes; with it enabled
+	// they come through here, so map them back to their dedicated keys.
 	switch code {
 	case 13:
 		return Key{Kind: KeyEnter, Shift: shift, Alt: alt, Ctrl: ctrl}, true
+	case 27:
+		return Key{Kind: KeyEsc, Shift: shift, Alt: alt, Ctrl: ctrl}, true
+	case 9:
+		if shift {
+			return Key{Kind: KeyShiftTab, Alt: alt, Ctrl: ctrl}, true
+		}
+		return Key{Kind: KeyTab, Shift: shift, Alt: alt, Ctrl: ctrl}, true
+	case 127, 8:
+		return Key{Kind: KeyBackspace, Shift: shift, Alt: alt, Ctrl: ctrl}, true
 	}
 	if ctrl {
 		switch code {
