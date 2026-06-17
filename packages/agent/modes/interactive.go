@@ -532,8 +532,8 @@ func (i *Interactive) Run(ctx context.Context) error {
 	// enter the alternate-screen buffer (CSI ?1049h). The renderer emits
 	// chat as normal terminal flow/scrollback and redraws only the live
 	// input/status block on normal typing.
-	_, _ = term.Write([]byte(tui.SeqBracketedPasteOn + tui.SeqEnhancedKeyboardOn + tui.SeqResetScrollRegion + tui.SeqDeleteKittyImages + tui.SeqClearScreenNoHome + tui.SeqClearScrollback + tui.MoveTo(1, 1)))
-	defer term.Write([]byte(tui.SeqResetScrollRegion + tui.SeqDeleteKittyImages + tui.SeqEnhancedKeyboardOff + tui.SeqBracketedPasteOff + tui.SeqShowCursor))
+	_, _ = term.Write([]byte(tui.SeqBracketedPasteOn + tui.SeqResetScrollRegion + tui.SeqDeleteKittyImages + tui.SeqClearScreenNoHome + tui.SeqClearScrollback + tui.MoveTo(1, 1)))
+	defer term.Write([]byte(tui.SeqResetScrollRegion + tui.SeqDeleteKittyImages + tui.SeqBracketedPasteOff + tui.SeqShowCursor))
 
 	// Streaming pacer: drains buffered text deltas at a steady rate
 	// so typewriter feel is identical across providers regardless of
@@ -1605,18 +1605,6 @@ func (i *Interactive) ctrlCExitArmed() bool {
 	return !t.IsZero() && time.Since(t) <= ctrlCExitWindow
 }
 
-// clearFileSuggestQuery strips the filter the user typed after the
-// last "@", leaving the bare "@" so the picker stays open. Called when
-// navigating between directory levels (Right/Left): the filter applied
-// to the level the user was on, not the one being entered, so carrying
-// it forward would wrongly hide the new directory's contents.
-func (i *Interactive) clearFileSuggestQuery() {
-	val := i.ed.Value()
-	if idx := strings.LastIndex(val, "@"); idx >= 0 {
-		i.ed.SetValue(val[:idx+1])
-	}
-}
-
 func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 	// Any key that isn't ctrl+c invalidates an armed ctrl+c-exit, so
 	// pressing ctrl+c then typing then ctrl+c much later doesn't quit
@@ -2040,8 +2028,8 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 	// messages are queued and delivered as follow-up turns when the
 	// current turn ends. See the submit handler below.
 
-	if k.Kind == tui.KeyEnter && (k.Alt || k.Shift) {
-		i.ed.HandleKey(k)
+	if k.Kind == tui.KeyEnter && k.Alt {
+		i.ed.HandleKey(tui.Key{Kind: tui.KeyRune, Rune: '\n', Alt: true})
 		return false
 	}
 
@@ -2095,21 +2083,12 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 			i.fileSuggest.Down()
 			return false
 		case tui.KeyRight:
-			// Open selected directory. The filter the user typed picked
-			// that directory at the current level; once we descend it no
-			// longer applies to the directory's contents, so clear it.
-			// Otherwise typing "@eda" then right would re-filter inside
-			// eda/ by "eda" and show nothing.
-			if i.fileSuggest.Right() {
-				i.clearFileSuggestQuery()
-			}
+			// Open selected directory.
+			i.fileSuggest.Right()
 			return false
 		case tui.KeyLeft:
-			// Go back to parent directory. Clear the filter for the same
-			// reason as Right: it was scoped to the level we just left.
-			if i.fileSuggest.Left() {
-				i.clearFileSuggestQuery()
-			}
+			// Go back to parent directory.
+			i.fileSuggest.Left()
 			return false
 		case tui.KeyEnter:
 			if entry, ok := i.fileSuggest.SelectedEntry(i.ed.Value()); ok {
