@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,6 +165,72 @@ func TestResolveOllamaUsesModelBaseURLBeforeDefault(t *testing.T) {
 	}
 }
 
+func TestResolveCustomProviderModelBaseURLBeatsProviderBaseURL(t *testing.T) {
+	t.Setenv("ZOT_HOME", t.TempDir())
+	t.Setenv("MY_COMPANY_API_KEY", "test-key")
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(path, []byte(`{
+		"providers": {
+			"my-company": {
+				"baseUrl": "https://provider.example.com/v1",
+				"api": "openai",
+				"models": [
+					{"id": "fast", "baseUrl": "https://model.example.com/v1"}
+				]
+			}
+		}
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	models, warnings := provider.LoadUserModelsWithWarnings(path)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	provider.SetLiveModels(nil)
+	provider.SetUserModels(models)
+	t.Cleanup(func() { provider.SetLiveModels(nil) })
+
+	r, err := Resolve(Args{Provider: "my-company", Model: "fast"}, true)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if r.BaseURL != "https://model.example.com/v1" {
+		t.Fatalf("BaseURL = %q, want model-level baseUrl", r.BaseURL)
+	}
+}
+
+func TestResolveCustomProviderInsecureFromModelsJSONBaseURL(t *testing.T) {
+	t.Setenv("ZOT_HOME", t.TempDir())
+	t.Setenv("LOCAL_PROXY_API_KEY", "test-key")
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(path, []byte(`{
+		"providers": {
+			"local-proxy": {
+				"baseUrl": "https://proxy.example.com/v1",
+				"api": "openai",
+				"models": [{"id": "default"}]
+			}
+		}
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	models, warnings := provider.LoadUserModelsWithWarnings(path)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	provider.SetLiveModels(nil)
+	provider.SetUserModels(models)
+	t.Cleanup(func() { provider.SetLiveModels(nil) })
+
+	r, err := Resolve(Args{Provider: "local-proxy", Model: "default", InsecureTLS: true}, true)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !r.InsecureTLS {
+		t.Fatal("InsecureTLS must be set for --insecure with models.json custom baseUrl")
+	}
+}
+
 func TestResolveOllamaFallsBackToDefaultBaseURL(t *testing.T) {
 	t.Setenv("ZOT_HOME", t.TempDir())
 	provider.SetLiveModels(nil)
@@ -209,5 +276,71 @@ func TestCanonicalProviderAliasesAreKnown(t *testing.T) {
 		if !isKnownProvider(canon) {
 			t.Errorf("alias %q maps to %q which is not a known provider", alias, canon)
 		}
+	}
+}
+
+func TestResolveInsecureOnlyWithExplicitBaseURL(t *testing.T) {
+	orig := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	t.Setenv("ZOT_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	resolved, err := Resolve(Args{Provider: "moonshotai", InsecureTLS: true}, false)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if resolved.InsecureTLS {
+		t.Fatal("InsecureTLS must not be set for built-in provider base URLs")
+	}
+	assertDefaultTransportStillSecure(t)
+
+	resolved, err = Resolve(Args{Provider: "openai", InsecureTLS: true, BaseURL: "https://my-llm.internal/v1"}, false)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !resolved.InsecureTLS {
+		t.Fatal("InsecureTLS must be set with --insecure and explicit --base-url")
+	}
+	assertDefaultTransportStillSecure(t)
+}
+
+func TestResolveInsecureFromConfigRequiresExplicitBaseURL(t *testing.T) {
+	orig := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	t.Setenv("ZOT_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	if err := SaveConfig(Config{Provider: "openai", Insecure: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := Resolve(Args{Provider: "openai"}, false)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if resolved.InsecureTLS {
+		t.Fatal("InsecureTLS must not be set without a custom base URL")
+	}
+	assertDefaultTransportStillSecure(t)
+
+	resolved, err = Resolve(Args{Provider: "openai", BaseURL: "https://my-llm.internal/v1"}, false)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !resolved.InsecureTLS {
+		t.Fatal("InsecureTLS must be set when config insecure=true and --base-url is provided")
+	}
+	assertDefaultTransportStillSecure(t)
+}
+
+func assertDefaultTransportStillSecure(t *testing.T) {
+	t.Helper()
+	tr, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return
+	}
+	if tr.TLSClientConfig != nil && tr.TLSClientConfig.InsecureSkipVerify {
+		t.Fatal("http.DefaultTransport must not be made insecure")
 	}
 }
