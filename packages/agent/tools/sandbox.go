@@ -168,6 +168,14 @@ func (s *Sandbox) checkCDTarget(dir string) error {
 		return fmt.Errorf("sandbox root: %w", err)
 	}
 	expanded := expandHome(dir)
+	// A leading forward slash is an absolute POSIX path. The shell uses
+	// POSIX-style paths regardless of host OS, but on Windows
+	// filepath.IsAbs("/etc") is false and filepath.Join would fold it
+	// back inside root, so a `cd /etc` escape would slip through. Treat
+	// it as an unconditional escape attempt: outside any project root.
+	if strings.HasPrefix(expanded, "/") && !filepath.IsAbs(expanded) {
+		return fmt.Errorf("jailed: cd outside sandbox root is not allowed (use /unjail to disable)")
+	}
 	if !filepath.IsAbs(expanded) {
 		// Relative targets (including `..`) resolve against the sandbox
 		// root, which is the bash tool's working directory when jailed.
