@@ -51,6 +51,43 @@ func TestLiveToolOverlayShowsFullBashCommandBeforeResult(t *testing.T) {
 	}
 }
 
+func TestLiveToolOverlayHeightDoesNotShrink(t *testing.T) {
+	tall := json.RawMessage(`{"command":"line1\nline2\nline3\nline4\nline5"}`)
+	v := View{
+		Theme: Dark,
+		ToolCalls: []ToolCallView{
+			{ID: "toolu_1", Name: "bash", Args: ShortArgs("bash", tall), RawJSONBuf: string(tall)},
+		},
+	}
+	tallRows := len(v.BuildLive(80))
+	if tallRows == 0 {
+		t.Fatal("expected rows for the tall command")
+	}
+
+	// Reserve the observed height, then switch to a shorter command
+	// (e.g. the next phase of the same turn). The overlay must stay at
+	// least as tall as before so the editor/status area never jumps up.
+	v.LiveToolMinRows = tallRows
+	short := json.RawMessage(`{"command":"echo hi"}`)
+	v.ToolCalls = []ToolCallView{
+		{ID: "toolu_2", Name: "bash", Args: ShortArgs("bash", short), RawJSONBuf: string(short)},
+	}
+	shortBuild := v.BuildLive(80)
+	if got := len(shortBuild); got < tallRows {
+		t.Fatalf("live overlay shrank from %d to %d rows", tallRows, got)
+	}
+	// The interactive caller strips trailing blank rows; the
+	// reservation must survive that trim, so the pad rows have to be
+	// non-blank box rows rather than trailing blanks.
+	trimmed := shortBuild
+	for len(trimmed) > 0 && strings.TrimSpace(stripANSI(trimmed[len(trimmed)-1])) == "" {
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	if len(trimmed) < tallRows {
+		t.Fatalf("reservation lost to trailing-blank trim: %d rows after trim, want >= %d", len(trimmed), tallRows)
+	}
+}
+
 func TestLiveToolOverlayKeepsWritePreviewAfterArgsEnd(t *testing.T) {
 	args := json.RawMessage(`{"path":"/tmp/sample.ts","content":"export const n = 1\n"}`)
 	v := View{
