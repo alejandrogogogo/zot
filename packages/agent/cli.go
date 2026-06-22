@@ -484,9 +484,11 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 			return reg
 		}
 		reg["swarm_spawn"] = &tools.SwarmSpawnTool{
-			Swarm:     swarmMgr,
-			Enabled:   AutoSwarmEnabled,
-			OnSpawned: onSpawnedSwarm,
+			Swarm:           swarmMgr,
+			Enabled:         AutoSwarmEnabled,
+			DefaultModel:    func() string { return r.Model },
+			DefaultProvider: func() string { return r.Provider },
+			OnSpawned:       onSpawnedSwarm,
 		}
 		return reg
 	}
