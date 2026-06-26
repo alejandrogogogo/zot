@@ -61,16 +61,6 @@ type InteractiveConfig struct {
 	// ThemeName mirrors the persisted config theme value. Empty means auto.
 	ThemeName string
 
-	// FlatTools renders tool calls without the bordered panel (a quiet
-	// header line plus indented, frameless output). Mirrors the
-	// resolved tool_render config / ZOT_FLAT_TOOLS env at startup.
-	FlatTools bool
-
-	// CompactUser renders sent user messages as a single quiet gutter
-	// line instead of a padded, tinted bubble. Mirrors the resolved
-	// compact_input config / ZOT_COMPACT_INPUT env at startup.
-	CompactUser bool
-
 	// QuickModelShortcuts maps slots 1-9 to provider/model pairs. The
 	// shortcuts are Ctrl+1..9. Cmd+1..9 may also work when the terminal
 	// forwards Command/Super keypresses, but Ctrl is the displayed chord.
@@ -483,10 +473,8 @@ func NewInteractive(cfg InteractiveConfig) *Interactive {
 	i := &Interactive{
 		cfg: cfg,
 		view: &tui.View{
-			Theme:       cfg.Theme,
-			ImageProto:  effectiveImageProtocol(cfg.InlineImagesEnabled),
-			FlatTools:   cfg.FlatTools,
-			CompactUser: cfg.CompactUser,
+			Theme:      cfg.Theme,
+			ImageProto: effectiveImageProtocol(cfg.InlineImagesEnabled),
 		},
 		// Prompt is the standard half-block accent bar used by chat
 		// speaker labels too, so the input gutter matches the rest

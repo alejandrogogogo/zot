@@ -29,19 +29,6 @@ type Config struct {
 	Temperature *float32 `json:"temperature,omitempty"`
 	Theme       string   `json:"theme"`
 
-	// ToolRender selects how tool calls are drawn in interactive mode.
-	// "box" (default, or empty) wraps each call in a bordered panel;
-	// "flat" drops the frame for a quiet header line plus indented,
-	// frameless output. The ZOT_FLAT_TOOLS env var overrides this when
-	// set ("1"/"true" forces flat, "0"/"false" forces box).
-	ToolRender string `json:"tool_render,omitempty"`
-
-	// CompactInput renders sent user messages as a single quiet gutter
-	// line instead of a padded, background-tinted bubble. nil/false
-	// (the default) keeps the bubble. The ZOT_COMPACT_INPUT env var
-	// overrides this when set.
-	CompactInput *bool `json:"compact_input,omitempty"`
-
 	// QuickModelShortcuts maps slots 1-9 to provider/model pairs used by
 	// Ctrl+1..9. Cmd+1..9 may also work on terminals that forward Super.
 	QuickModelShortcuts []QuickModelShortcut `json:"quick_model_shortcuts,omitempty"`
@@ -109,41 +96,6 @@ func ZotHome() string {
 
 // ConfigPath returns the path to config.json.
 func ConfigPath() string { return filepath.Join(ZotHome(), "config.json") }
-
-// FlatToolRender reports whether tool calls should render flat (no
-// bordered panel). The ZOT_FLAT_TOOLS env var takes precedence over
-// the config when set: "1"/"true"/"yes"/"on" force flat, "0"/"false"/
-// "no"/"off" force box. Otherwise the config's tool_render is
-// consulted; "flat" is flat, anything else (including empty) is box.
-func (c Config) FlatToolRender() bool {
-	if v := strings.TrimSpace(strings.ToLower(os.Getenv("ZOT_FLAT_TOOLS"))); v != "" {
-		switch v {
-		case "1", "true", "yes", "on", "flat":
-			return true
-		case "0", "false", "no", "off", "box":
-			return false
-		}
-	}
-	return strings.EqualFold(strings.TrimSpace(c.ToolRender), "flat")
-}
-
-// CompactUserInput reports whether sent user messages should render as
-// a single quiet gutter line instead of a padded, background-tinted
-// bubble. The ZOT_COMPACT_INPUT env var takes precedence over the
-// config when set: "1"/"true"/"yes"/"on" force compact, "0"/"false"/
-// "no"/"off" force the bubble. Otherwise the config's compact_input
-// is consulted (nil/false means the bubble).
-func (c Config) CompactUserInput() bool {
-	if v := strings.TrimSpace(strings.ToLower(os.Getenv("ZOT_COMPACT_INPUT"))); v != "" {
-		switch v {
-		case "1", "true", "yes", "on", "compact":
-			return true
-		case "0", "false", "no", "off", "bubble":
-			return false
-		}
-	}
-	return c.CompactInput != nil && *c.CompactInput
-}
 
 // AuthPath returns the path to auth.json.
 func AuthPath() string { return filepath.Join(ZotHome(), "auth.json") }
