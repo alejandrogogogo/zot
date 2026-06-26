@@ -30,13 +30,12 @@ type btwTurn struct {
 // Cancellation: esc cancels an in-flight call when one is running,
 // otherwise closes the dialog.
 type btwDialog struct {
-	mu          sync.Mutex
-	active      bool
-	turns       []btwTurn
-	editor      *tui.Editor
-	loading     bool
-	compactMode bool
-	cancel      context.CancelFunc
+	mu      sync.Mutex
+	active  bool
+	turns   []btwTurn
+	editor  *tui.Editor
+	loading bool
+	cancel  context.CancelFunc
 
 	// spin drives the same braille animation + rotating funny-line
 	// shown in the main status bar. Owned by the dialog so its clock
@@ -101,11 +100,10 @@ func (d *btwDialog) Loading() bool {
 // auto-submitted (so /btw <text> starts a conversation right away).
 // invalidate, if non-nil, is called after each state change so the
 // host redraw loop can pick up the update without polling.
-func (d *btwDialog) Open(th tui.Theme, agent *core.Agent, system, model, cwd, seed string, compactMode bool, invalidate func()) {
+func (d *btwDialog) Open(th tui.Theme, agent *core.Agent, system, model, cwd, seed string, invalidate func()) {
 	d.mu.Lock()
 	d.active = true
 	d.theme = th
-	d.compactMode = compactMode
 	d.turns = nil
 	d.loading = false
 	d.cancel = nil
@@ -321,7 +319,7 @@ func (d *btwDialog) Render(th tui.Theme, width int) []string {
 
 	for _, t := range d.turns {
 		out = append(out, "")
-		out = append(out, btwUserBubbleRows(th, t.User, width-2, d.compactMode)...)
+		out = append(out, btwUserBubbleRows(th, t.User, width-2)...)
 		if t.Assistant != "" {
 			out = append(out, "")
 			md := tui.RenderMarkdown(t.Assistant, th, width-4)
@@ -392,7 +390,7 @@ func (d *btwDialog) CursorPos(width int) (row, col int) {
 	}
 	for _, t := range d.turns {
 		editorOffset++ // blank
-		editorOffset += len(btwUserBubbleRows(d.theme, t.User, width-2, d.compactMode))
+		editorOffset += len(btwUserBubbleRows(d.theme, t.User, width-2))
 		if t.Assistant != "" {
 			editorOffset++ // blank
 			editorOffset += len(strings.Split(tui.RenderMarkdown(t.Assistant, d.theme, width-4), "\n"))
@@ -415,7 +413,7 @@ func (d *btwDialog) CursorPos(width int) (row, col int) {
 // panel, left-edge ▌ bar, padding rows above and below). The frame
 // padding is the caller's job; bubbleWidth is the available row
 // width inside the frame.
-func btwUserBubbleRows(th tui.Theme, text string, bubbleWidth int, compactMode bool) []string {
+func btwUserBubbleRows(th tui.Theme, text string, bubbleWidth int) []string {
 	const leftGutter = 0
 	const rightGutter = 2
 	innerWidth := bubbleWidth - 2 - leftGutter - rightGutter // 2 = bar's two cells
@@ -427,15 +425,6 @@ func btwUserBubbleRows(th tui.Theme, text string, bubbleWidth int, compactMode b
 		inner := strings.Repeat(" ", leftGutter) + content
 		return "  " + bar + th.UserBubble(inner, bubbleWidth-2)
 	}
-	if compactMode {
-		innerWidth = bubbleWidth - 2
-		if innerWidth < 1 {
-			innerWidth = 1
-		}
-		row = func(content string) string {
-			return "  " + th.FG256(th.Accent, "▌ ") + th.FG256(th.Muted, content)
-		}
-	}
 	var bubble []string
 	for _, l := range strings.Split(text, "\n") {
 		for _, w := range tui.WrapANSILine(l, innerWidth) {
@@ -444,9 +433,6 @@ func btwUserBubbleRows(th tui.Theme, text string, bubbleWidth int, compactMode b
 	}
 	if len(bubble) == 0 {
 		return nil
-	}
-	if compactMode {
-		return bubble
 	}
 	out := make([]string, 0, len(bubble)+2)
 	out = append(out, row(""))

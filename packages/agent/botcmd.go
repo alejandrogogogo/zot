@@ -10,14 +10,13 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/patriceckhart/zot/packages/agent/modes/bot"
 	"github.com/patriceckhart/zot/packages/agent/modes/telegram"
 	"github.com/patriceckhart/zot/packages/core"
-	"github.com/patriceckhart/zot/packages/provider"
 )
 
 // detachChild configures cmd to run in its own process group so tty
@@ -357,36 +356,24 @@ func botRun(rawTail []string, version string) error {
 		s, _, serr := openOrCreateSessionForBot(args, resolved, agent, version)
 		if serr == nil {
 			sess = s
-			agent.OnMessageAppended = func(msg provider.Message) {
-				_ = sess.AppendMessage(msg)
-			}
-			agent.OnUsage = func(u provider.Usage) {
-				_ = sess.AppendUsage(u, u)
-			}
-			agent.OnTranscriptCompacted = func(msgs []provider.Message) {
-				_ = sess.AppendCompaction(msgs)
-			}
 			defer sess.Close()
 		} else {
 			fmt.Fprintln(os.Stderr, "session:", serr)
 		}
 	}
 
-	// Construct the Telegram adapter and generic runner.
-	adapter := telegram.NewAdapter(
-		telegram.NewClient(cfg.BotToken),
-		&cfg,
-		func(c telegram.Config) error {
-			return telegram.SaveConfig(ZotHome(), c)
-		},
-	)
-	var runner *bot.Runner
-	runner = bot.NewRunner(adapter, agent, bot.Config{
+	var b *telegram.Bot
+	b = &telegram.Bot{
+		Client:     telegram.NewClient(cfg.BotToken),
+		Agent:      agent,
+		Config:     cfg,
 		ZotHome:    ZotHome(),
 		Provider:   resolved.Provider,
-		Model:      resolved.Model,
 		AuthMethod: resolved.AuthMethod,
 		CWD:        args.CWD,
+		Save: func(c telegram.Config) error {
+			return telegram.SaveConfig(ZotHome(), c)
+		},
 		RefreshCreds: func() error {
 			// Re-run the same resolver the tui uses so we pick up
 			// refreshed oauth tokens, re-logins, and model switches.
@@ -398,10 +385,12 @@ func botRun(rawTail []string, version string) error {
 			}
 			agent.Client = next.NewClient()
 			agent.Model = next.Model
-			runner.UpdateRuntimeConfig(next.Provider, next.Model, next.AuthMethod, next.CWD)
+			b.Provider = next.Provider
+			b.AuthMethod = next.AuthMethod
+			b.CWD = next.CWD
 			return nil
 		},
-	})
+	}
 
 	// Record our pid so `zot telegram-bot status` / `zot telegram-bot stop` can find us,
 	// regardless of whether we were started directly or via `bot start`.
@@ -418,7 +407,7 @@ func botRun(rawTail []string, version string) error {
 		cancel()
 	}()
 	defer cancel()
-	return runner.Run(ctx)
+	return b.Run(ctx)
 }
 
 // openOrCreateSessionForBot reuses the same logic as interactive mode
@@ -455,3 +444,6 @@ func maskToken(tok string) string {
 	}
 	return tok[:i+1] + body[:3] + "..." + body[len(body)-3:]
 }
+
+// _ compile-time hint so the strconv import stays if we later add numeric parsing.
+var _ = strconv.Itoa

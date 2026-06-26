@@ -1,6 +1,11 @@
 package telegram
 
-import "github.com/patriceckhart/zot/packages/agent/modes/bot"
+import "strings"
 
-// isStopCommand is a shim to bot.IsStopCommand for backward compatibility.
-var isStopCommand = bot.IsStopCommand
+// isStopCommand reports whether text should abort the active turn.
+// Telegram users often type plain "stop" rather than bot-style
+// "/stop"; keep this intentionally narrow so normal prompts like
+// "stop doing X" still go to the agent.
+func isStopCommand(text string) bool {
+	return strings.EqualFold(strings.TrimSpace(text), "stop")
+}
