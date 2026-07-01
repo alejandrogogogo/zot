@@ -75,17 +75,6 @@ type InteractiveConfig struct {
 	// When true, it enables both flat tool calls and compact user turns.
 	CompactMode *bool
 
-	// TUIInputStyle controls the main input rendering: plain or lines.
-	TUIInputStyle string
-
-	// TUIStatusPosition controls whether the status block renders above
-	// or below the main input.
-	TUIStatusPosition string
-
-	// TUIWorkingPosition controls whether the busy/working spinner renders
-	// above or below the main input.
-	TUIWorkingPosition string
-
 	// QuickModelShortcuts maps slots 1-9 to provider/model pairs. The
 	// shortcuts are Ctrl+1..9. Cmd+1..9 may also work when the terminal
 	// forwards Command/Super keypresses, but Ctrl is the displayed chord.
@@ -281,9 +270,6 @@ type SettingsStore interface {
 	SetRecursiveFileSuggest(enabled bool) error
 	SetRespectGitignore(enabled bool) error
 	SetCompactMode(enabled bool) error
-	SetTUIInputStyle(style string) error
-	SetTUIStatusPosition(position string) error
-	SetTUIWorkingPosition(position string) error
 	SetReasoning(level string) error
 	SetTheme(name string) error
 }
@@ -429,8 +415,9 @@ type Interactive struct {
 	parkedTotal int
 
 	// inputHistoryIndex is -1 when not browsing history. When the
-	// editor is empty, Up/Down can walk previous user prompts without
-	// stealing normal vertical cursor movement in non-empty input.
+	// editor is empty, Left/Right can walk previous user prompts for
+	// quick manual testing without stealing normal cursor movement in
+	// non-empty input.
 	inputHistoryIndex int
 
 	// lastCtrlC is when the user last pressed ctrl+c. The first press
@@ -593,8 +580,7 @@ func (i *Interactive) Run(ctx context.Context) error {
 	if seq := tui.ReportCWD(i.cfg.CWD); seq != "" {
 		_, _ = term.Write([]byte(seq))
 	}
-	defer term.Write([]byte(tui.SeqResetScrollRegion + tui.SeqDeleteKittyImages + tui.SeqEnhancedKeyboardOff + tui.SeqBracketedPasteOff + tui.ResetCursorColor() + tui.ResetCursorShape() + tui.SeqShowCursor))
-	i.applyInputCursorColor()
+	defer term.Write([]byte(tui.SeqResetScrollRegion + tui.SeqDeleteKittyImages + tui.SeqEnhancedKeyboardOff + tui.SeqBracketedPasteOff + tui.SeqShowCursor))
 
 	// Streaming pacer: drains buffered text deltas at a steady rate
 	// so typewriter feel is identical across providers regardless of
@@ -1226,20 +1212,13 @@ func (i *Interactive) redraw() {
 	if m, err := provider.FindModel(i.cfg.Provider, i.cfg.Model); err == nil {
 		ctxMax = m.ContextWindow
 	}
-	statusPosition := tui.NormalizeStatusPosition(i.cfg.TUIStatusPosition)
-	workingPosition := tui.NormalizeWorkingPosition(i.cfg.TUIWorkingPosition)
-	workingWithStatus := statusPosition == workingPosition
-	statusBusyPrefix := ""
-	if workingWithStatus {
-		statusBusyPrefix = busyPrefix
-	}
 	statusLines := tui.StatusBar(tui.StatusBarParams{
 		Theme:          i.cfg.Theme,
 		Provider:       i.cfg.Provider,
 		Model:          i.cfg.Model,
 		Reasoning:      i.cfg.Reasoning,
 		Busy:           i.busy,
-		BusyPrefix:     statusBusyPrefix,
+		BusyPrefix:     busyPrefix,
 		CWD:            i.cfg.CWD,
 		Locked:         i.cfg.Sandbox.Locked(),
 		NoYolo:         i.cfg.NoYolo,
@@ -1251,28 +1230,7 @@ func (i *Interactive) redraw() {
 		Telegram:       i.telegramBridge != nil && i.telegramBridge.Active(),
 		Cols:           cols,
 	})
-	inputStyle := tui.NormalizeInputStyle(i.cfg.TUIInputStyle)
-	if inputStyle == tui.InputStyleLines || inputStyle == tui.InputStyleBlock {
-		i.ed.Prompt = ""
-	} else {
-		i.ed.Prompt = i.cfg.Theme.AccentBar(i.cfg.Theme.Accent)
-	}
 	edLines, curR, curC := i.ed.Render(cols)
-	var workingLines []string
-	if busyPrefix != "" && !workingWithStatus {
-		workingLines = []string{"  " + busyPrefix}
-	}
-	inputCursorOffset := 0
-	inputCursorColOffset := 0
-	switch inputStyle {
-	case tui.InputStyleLines:
-		edLines = tui.InputLines(i.cfg.Theme, edLines, cols)
-		inputCursorOffset = 1
-	case tui.InputStyleBlock:
-		edLines = tui.InputBlock(i.cfg.Theme, edLines, cols)
-		inputCursorOffset = 1
-		inputCursorColOffset = 2
-	}
 
 	// "Sliding in" chips for messages the user typed while a turn is
 	// in flight. Shown directly above the status bar so they're close
@@ -1303,8 +1261,7 @@ func (i *Interactive) redraw() {
 	// content. The status block and editor get their own dedicated
 	// blanks so spacing stays consistent whether or not a dialog or
 	// popup is showing.
-	bottom := make([]string, 0, len(dialog)+len(suggest)+len(queue)+len(statusLines)+len(edLines)+9)
-	inputStartRow := -1
+	bottom := make([]string, 0, len(dialog)+len(suggest)+len(queue)+len(edLines)+9)
 	if len(dialog) > 0 {
 		bottom = append(bottom, "")
 	}
@@ -1320,42 +1277,10 @@ func (i *Interactive) redraw() {
 	if !i.swarmDialog.Active() {
 		bottom = append(bottom, suggest...)
 		bottom = append(bottom, queue...)
-		lineInput := inputStyle == tui.InputStyleLines
-		statusBelow := statusPosition == tui.StatusPositionBelowInput
-		workingBelow := workingPosition == tui.WorkingPositionBelowInput
-
-		var aboveInput []string
-		if !statusBelow {
-			aboveInput = append(aboveInput, statusLines...)
-		}
-		if !workingBelow {
-			aboveInput = append(aboveInput, workingLines...)
-		}
-		var belowInput []string
-		if workingBelow {
-			belowInput = append(belowInput, workingLines...)
-		}
-		if statusBelow {
-			belowInput = append(belowInput, statusLines...)
-		}
-
 		bottom = append(bottom, "")
-		bottom = append(bottom, aboveInput...)
-		needsGapAboveInput := len(aboveInput) > 0 && !lineInput
-		if lineInput && statusBelow && !workingBelow && len(workingLines) > 0 {
-			needsGapAboveInput = true
-		}
-		if needsGapAboveInput {
-			bottom = append(bottom, "")
-		}
-		inputStartRow = len(bottom)
+		bottom = append(bottom, statusLines...)
+		bottom = append(bottom, "")
 		bottom = append(bottom, edLines...)
-		if len(belowInput) > 0 {
-			if !lineInput {
-				bottom = append(bottom, "")
-			}
-			bottom = append(bottom, belowInput...)
-		}
 	}
 
 	_, rows := i.cfg.Terminal.Size()
@@ -1512,8 +1437,13 @@ func (i *Interactive) redraw() {
 	if len(dialog) > 0 {
 		dialogLead = 1
 	}
-	cursorRow := inputStartRow + inputCursorOffset + curR
-	cursorCol := curC + inputCursorColOffset
+	// +2 accounts for the blank row above statusLines (so the
+	// status block has air above it) and the blank row between
+	// statusLines and edLines (input breathing room). Without
+	// these the rendered cursor would land on a blank instead of
+	// inside the editor row.
+	cursorRow := dialogLead + len(dialog) + len(suggest) + len(queue) + 1 + len(statusLines) + 1 + curR
+	cursorCol := curC
 	if i.btwDialog.Active() {
 		if r, c := i.btwDialog.CursorPos(cols); r >= 0 {
 			cursorRow = dialogLead + r
@@ -2197,17 +2127,14 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 				i.invalidate()
 				return false
 			}
+			i.mu.Unlock()
 		}
 		// In multi-line / wrapped input, Up first moves inside the editor.
-		// At the editor's top edge, plain Up can browse input history when
-		// history browsing is safe/active; otherwise it falls back to chat
-		// scrolling, preserving the old single-line scroll behavior.
+		// At the editor's top edge it falls back to chat scrolling, preserving
+		// the old single-line scroll behavior.
 		if !i.suggest.Active(i.ed.Value()) && !i.fileSuggest.Active(i.ed.Value()) {
 			if i.ed.MoveVertical(-1) {
 				i.invalidate()
-				return false
-			}
-			if !k.Alt && i.handleInputHistoryKey(k) {
 				return false
 			}
 			i.scrollBy(+3)
@@ -2217,9 +2144,6 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		if !i.suggest.Active(i.ed.Value()) && !i.fileSuggest.Active(i.ed.Value()) {
 			if i.ed.MoveVertical(+1) {
 				i.invalidate()
-				return false
-			}
-			if !k.Alt && i.handleInputHistoryKey(k) {
 				return false
 			}
 			if i.scrollOffset > 0 {
@@ -2344,7 +2268,10 @@ func (i *Interactive) handleKey(ctx context.Context, k tui.Key) (done bool) {
 		}
 	}
 
-	if i.inputHistoryIndex >= 0 && k.Kind != tui.KeyUp && k.Kind != tui.KeyDown {
+	if i.handleInputHistoryKey(k) {
+		return false
+	}
+	if i.inputHistoryIndex >= 0 && k.Kind != tui.KeyLeft && k.Kind != tui.KeyRight {
 		i.inputHistoryIndex = -1
 	}
 
@@ -2480,11 +2407,11 @@ func (i *Interactive) pasteClipboard() {
 }
 
 func (i *Interactive) handleInputHistoryKey(k tui.Key) bool {
-	if k.Kind != tui.KeyUp && k.Kind != tui.KeyDown {
+	if k.Kind != tui.KeyLeft && k.Kind != tui.KeyRight {
 		return false
 	}
-	// Do not steal normal vertical cursor movement. History browsing can only
-	// start from an empty editor; once active, Up/Down keep walking
+	// Do not steal normal cursor movement. History browsing can only
+	// start from an empty editor; once active, Left/Right keep walking
 	// the ring so repeated presses work even though the editor now
 	// contains the selected historical prompt.
 	if i.inputHistoryIndex < 0 && !i.ed.IsEmpty() {
@@ -2496,22 +2423,17 @@ func (i *Interactive) handleInputHistoryKey(k tui.Key) bool {
 	}
 
 	if i.inputHistoryIndex < 0 {
-		// Start just after the newest item so Up lands on the most
-		// recent user prompt. A lone Down from an empty editor is not
-		// history navigation; let the caller fall through to normal UI
-		// behavior instead.
-		if k.Kind != tui.KeyUp {
-			return false
-		}
+		// Start just after the newest item so Left lands on the most
+		// recent user prompt and Right keeps the editor empty.
 		i.inputHistoryIndex = len(hist)
 	}
 
 	switch k.Kind {
-	case tui.KeyUp:
+	case tui.KeyLeft:
 		if i.inputHistoryIndex > 0 {
 			i.inputHistoryIndex--
 		}
-	case tui.KeyDown:
+	case tui.KeyRight:
 		if i.inputHistoryIndex < len(hist) {
 			i.inputHistoryIndex++
 		}
@@ -2874,13 +2796,6 @@ func onOff(v bool) string {
 	return "disabled"
 }
 
-func (i *Interactive) applyInputCursorColor() {
-	if i == nil || i.cfg.Terminal == nil {
-		return
-	}
-	_, _ = i.cfg.Terminal.Write([]byte(tui.CursorColor256(15) + tui.CursorShapeBlock()))
-}
-
 func (i *Interactive) openSettingsDialog() {
 	detected := tui.DetectImageProtocol()
 	imgEnabled := detected != tui.ImageProtocolNone
@@ -2910,9 +2825,6 @@ func (i *Interactive) openSettingsDialog() {
 	recursiveFiles := i.cfg.RecursiveFileSuggest != nil && *i.cfg.RecursiveFileSuggest
 	respectGitignore := i.cfg.RespectGitignore == nil || *i.cfg.RespectGitignore
 	compactMode := i.compactModeEnabled()
-	inputStyle := tui.NormalizeInputStyle(i.cfg.TUIInputStyle)
-	statusPosition := tui.NormalizeStatusPosition(i.cfg.TUIStatusPosition)
-	workingPosition := tui.NormalizeWorkingPosition(i.cfg.TUIWorkingPosition)
 	quickItems := i.quickModelSettingItems()
 
 	reasoningOptions := []settingsOption{
@@ -2961,42 +2873,6 @@ func (i *Interactive) openSettingsDialog() {
 		}
 	}
 
-	inputStyleOptions := []settingsOption{
-		{value: tui.InputStylePlain, label: "plain", desc: "render the input as the normal prompt line"},
-		{value: tui.InputStyleLines, label: "lines", desc: "draw separator lines above and below the input"},
-		{value: tui.InputStyleBlock, label: "block", desc: "render the input as a user-bubble-style block"},
-	}
-	inputStyleChoice := 0
-	for idx, opt := range inputStyleOptions {
-		if opt.value == inputStyle {
-			inputStyleChoice = idx
-			break
-		}
-	}
-	statusPositionOptions := []settingsOption{
-		{value: tui.StatusPositionAboveInput, label: "above input", desc: "show model, usage, and working directory above the input"},
-		{value: tui.StatusPositionBelowInput, label: "below input", desc: "show model, usage, and working directory below the input"},
-	}
-	statusPositionChoice := 0
-	for idx, opt := range statusPositionOptions {
-		if opt.value == statusPosition {
-			statusPositionChoice = idx
-			break
-		}
-	}
-
-	workingPositionOptions := []settingsOption{
-		{value: tui.WorkingPositionAboveInput, label: "above input", desc: "show the working spinner above the input"},
-		{value: tui.WorkingPositionBelowInput, label: "below input", desc: "show the working spinner below the input"},
-	}
-	workingPositionChoice := 0
-	for idx, opt := range workingPositionOptions {
-		if opt.value == workingPosition {
-			workingPositionChoice = idx
-			break
-		}
-	}
-
 	items := []settingsItem{
 		{
 			key:      "inline_images_enabled",
@@ -3033,34 +2909,6 @@ func (i *Interactive) openSettingsDialog() {
 			value: compactMode,
 		},
 		{
-			key:   "tui_settings",
-			label: "tui settings",
-			desc:  "choose input chrome and where status information appears",
-			children: []settingsItem{
-				{
-					key:     "tui_input_style",
-					label:   "input style",
-					desc:    "choose between the plain prompt, lines, and a block input area",
-					options: inputStyleOptions,
-					choice:  inputStyleChoice,
-				},
-				{
-					key:     "tui_status_position",
-					label:   "status position",
-					desc:    "place model, usage, and working directory above or below the input",
-					options: statusPositionOptions,
-					choice:  statusPositionChoice,
-				},
-				{
-					key:     "tui_working_position",
-					label:   "working spinner position",
-					desc:    "place the working spinner above or below the input",
-					options: workingPositionOptions,
-					choice:  workingPositionChoice,
-				},
-			},
-		},
-		{
 			key:     "reasoning",
 			label:   "thinking level",
 			desc:    "reasoning depth for thinking-capable models",
@@ -3095,12 +2943,6 @@ func (i *Interactive) applySettingChange(act settingsAction) {
 		i.applyReasoningSetting(act.StringValue)
 	case act.Key == "theme":
 		i.applyThemeSetting(act.StringValue)
-	case act.Key == "tui_input_style":
-		i.applyTUIInputStyleSetting(act.StringValue)
-	case act.Key == "tui_status_position":
-		i.applyTUIStatusPositionSetting(act.StringValue)
-	case act.Key == "tui_working_position":
-		i.applyTUIWorkingPositionSetting(act.StringValue)
 	default:
 		i.applySettingToggle(act.Key, act.Value)
 	}
@@ -3379,84 +3221,6 @@ func (i *Interactive) applySettingToggle(key string, value bool) {
 	}
 }
 
-func (i *Interactive) applyTUIInputStyleSetting(style string) {
-	defer func() {
-		if i.rend != nil {
-			i.rend.Clear()
-		}
-		i.invalidate()
-	}()
-	style = tui.NormalizeInputStyle(style)
-	i.cfg.TUIInputStyle = style
-	i.applyInputCursorColor()
-	if i.cfg.SettingsStore != nil {
-		if err := i.cfg.SettingsStore.SetTUIInputStyle(style); err != nil {
-			i.mu.Lock()
-			i.statusErr = "settings: " + err.Error()
-			i.mu.Unlock()
-			return
-		}
-	}
-	i.mu.Lock()
-	i.statusOK = "input style " + style
-	i.statusErr = ""
-	i.mu.Unlock()
-}
-
-func (i *Interactive) applyTUIStatusPositionSetting(position string) {
-	defer func() {
-		if i.rend != nil {
-			i.rend.Clear()
-		}
-		i.invalidate()
-	}()
-	position = tui.NormalizeStatusPosition(position)
-	i.cfg.TUIStatusPosition = position
-	if i.cfg.SettingsStore != nil {
-		if err := i.cfg.SettingsStore.SetTUIStatusPosition(position); err != nil {
-			i.mu.Lock()
-			i.statusErr = "settings: " + err.Error()
-			i.mu.Unlock()
-			return
-		}
-	}
-	i.mu.Lock()
-	label := "above input"
-	if position == tui.StatusPositionBelowInput {
-		label = "below input"
-	}
-	i.statusOK = "status position " + label
-	i.statusErr = ""
-	i.mu.Unlock()
-}
-
-func (i *Interactive) applyTUIWorkingPositionSetting(position string) {
-	defer func() {
-		if i.rend != nil {
-			i.rend.Clear()
-		}
-		i.invalidate()
-	}()
-	position = tui.NormalizeWorkingPosition(position)
-	i.cfg.TUIWorkingPosition = position
-	if i.cfg.SettingsStore != nil {
-		if err := i.cfg.SettingsStore.SetTUIWorkingPosition(position); err != nil {
-			i.mu.Lock()
-			i.statusErr = "settings: " + err.Error()
-			i.mu.Unlock()
-			return
-		}
-	}
-	i.mu.Lock()
-	label := "above input"
-	if position == tui.WorkingPositionBelowInput {
-		label = "below input"
-	}
-	i.statusOK = "working spinner position " + label
-	i.statusErr = ""
-	i.mu.Unlock()
-}
-
 func (i *Interactive) applyThemeSetting(name string) {
 	if i.cfg.SettingsStore != nil {
 		if err := i.cfg.SettingsStore.SetTheme(name); err != nil {
@@ -3505,7 +3269,6 @@ func (i *Interactive) applyThemeNow(name string) {
 	i.view.Theme = th
 	i.view.InvalidateRenderCache()
 	i.ed.Prompt = th.AccentBar(th.Accent)
-	i.applyInputCursorColor()
 	i.spin.Configure(th)
 	if i.rend != nil {
 		i.rend.SetTheme(th)
@@ -4323,7 +4086,7 @@ func (i *Interactive) openBtwDialog(args []string) {
 		return
 	}
 	seed := strings.TrimSpace(strings.Join(args, " "))
-	i.btwDialog.Open(i.cfg.Theme, i.agent, i.agent.System, i.cfg.Model, i.cfg.CWD, seed, i.compactModeEnabled(), tui.NormalizeInputStyle(i.cfg.TUIInputStyle) == tui.InputStyleLines, i.invalidate)
+	i.btwDialog.Open(i.cfg.Theme, i.agent, i.agent.System, i.cfg.Model, i.cfg.CWD, seed, i.compactModeEnabled(), i.invalidate)
 	i.invalidate()
 }
 

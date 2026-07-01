@@ -36,7 +36,6 @@ type btwDialog struct {
 	editor      *tui.Editor
 	loading     bool
 	compactMode bool
-	lineInput   bool
 	cancel      context.CancelFunc
 
 	// spin drives the same braille animation + rotating funny-line
@@ -102,20 +101,15 @@ func (d *btwDialog) Loading() bool {
 // auto-submitted (so /btw <text> starts a conversation right away).
 // invalidate, if non-nil, is called after each state change so the
 // host redraw loop can pick up the update without polling.
-func (d *btwDialog) Open(th tui.Theme, agent *core.Agent, system, model, cwd, seed string, compactMode bool, lineInput bool, invalidate func()) {
+func (d *btwDialog) Open(th tui.Theme, agent *core.Agent, system, model, cwd, seed string, compactMode bool, invalidate func()) {
 	d.mu.Lock()
 	d.active = true
 	d.theme = th
 	d.compactMode = compactMode
-	d.lineInput = lineInput
 	d.turns = nil
 	d.loading = false
 	d.cancel = nil
-	prompt := th.AccentBar(th.Accent)
-	if lineInput {
-		prompt = ""
-	}
-	d.editor = tui.NewEditor(prompt)
+	d.editor = tui.NewEditor(th.AccentBar(th.Accent))
 	d.frozenSystem = system
 	d.frozenMsgs = agent.Messages()
 	d.client = agent.Client
@@ -361,10 +355,6 @@ func (d *btwDialog) Render(th tui.Theme, width int) []string {
 		// Render at width-2 to match the two-cell left indent applied
 		// below. CursorPos uses the same width so the reported cursor
 		// column matches the wrapped layout shown on screen.
-		d.editor.Prompt = th.AccentBar(th.Accent)
-		if d.lineInput {
-			d.editor.Prompt = ""
-		}
 		edLines, _, _ := d.editor.Render(width - 2)
 		for _, l := range edLines {
 			// Indent the editor body so it lines up with the side-chat
@@ -416,10 +406,6 @@ func (d *btwDialog) CursorPos(width int) (row, col int) {
 		editorOffset++ // spinner line
 	}
 	editorOffset++ // pre-editor blank
-	d.editor.Prompt = d.theme.AccentBar(d.theme.Accent)
-	if d.lineInput {
-		d.editor.Prompt = ""
-	}
 	_, eRow, eCol := d.editor.Render(width - 2)
 	return editorOffset + eRow, eCol + 2 /* matches render indent */
 }

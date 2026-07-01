@@ -747,19 +747,13 @@ func (v *View) renderMessage(m provider.Message, width int, turnOpen bool) []str
 				// in one assistant message render as N adjacent boxes
 				// instead of stacking unclosed top edges.
 				if v.FlatTools || v.CompactMode {
-					if v.CompactMode {
-						lines = append(lines, compactToolBlank(v.Theme, width))
-					}
-					lines = append(lines, toolHeaderLine(v.Theme, label, width, v.CompactMode))
+					lines = append(lines, flatToolHeader(v.Theme, label, width))
 					if tr.IsError {
-						lines = append(lines, toolBodyLine(v.Theme, v.Theme.FG256(color, "  error"), width, v.CompactMode))
+						lines = append(lines, flatToolBody(v.Theme, v.Theme.FG256(color, "  error")))
 					}
 					for _, line := range v.renderToolResultContent(tr.Content, width, color, path, startLine) {
 						_, stripped := parseImageFootprint(line)
-						lines = append(lines, toolBodyLine(v.Theme, stripped, width, v.CompactMode))
-					}
-					if v.CompactMode {
-						lines = append(lines, compactToolBlank(v.Theme, width))
+						lines = append(lines, flatToolBody(v.Theme, stripped))
 					}
 					continue
 				}
@@ -835,14 +829,8 @@ func (v *View) renderToolCall(tc ToolCallView, width int) []string {
 				for len(body) < high {
 					body = append(body, "")
 				}
-				if v.CompactMode {
-					lines = append(lines, compactToolBlank(v.Theme, width))
-				}
-				lines = append(lines, toolHeaderLine(v.Theme, label, width, v.CompactMode))
+				lines = append(lines, flatToolHeader(v.Theme, label, width))
 				lines = append(lines, body...)
-				if v.CompactMode {
-					lines = append(lines, compactToolBlank(v.Theme, width))
-				}
 				return lines
 			}
 			for len(body) < high {
@@ -862,13 +850,7 @@ func (v *View) renderToolCall(tc ToolCallView, width int) []string {
 	// for no-output tools.
 	if tc.Result == "" {
 		if v.FlatTools || v.CompactMode {
-			if v.CompactMode {
-				lines = append(lines, compactToolBlank(v.Theme, width))
-			}
-			lines = append(lines, toolHeaderLine(v.Theme, label, width, v.CompactMode))
-			if v.CompactMode {
-				lines = append(lines, compactToolBlank(v.Theme, width))
-			}
+			lines = append(lines, flatToolHeader(v.Theme, label, width))
 			return lines
 		}
 		lines = append(lines, toolBoxTop(v.Theme, label, width))
@@ -886,17 +868,11 @@ func (v *View) renderToolCall(tc ToolCallView, width int) []string {
 		color = v.Theme.Error
 	}
 	if v.FlatTools || v.CompactMode {
-		if v.CompactMode {
-			lines = append(lines, compactToolBlank(v.Theme, width))
-		}
-		lines = append(lines, toolHeaderLine(v.Theme, label, width, v.CompactMode))
+		lines = append(lines, flatToolHeader(v.Theme, label, width))
 		body := toolResultBlock(v.Theme, tc.Result, flatToolBodyRenderWidth(width), color)
 		for _, l := range v.collapseToolBody(body, false) {
 			_, stripped := parseImageFootprint(l)
-			lines = append(lines, toolBodyLine(v.Theme, stripped, width, v.CompactMode))
-		}
-		if v.CompactMode {
-			lines = append(lines, compactToolBlank(v.Theme, width))
+			lines = append(lines, flatToolBody(v.Theme, stripped))
 		}
 		return lines
 	}
@@ -998,7 +974,7 @@ func (v *View) wrapLiveBody(body []string, width int) []string {
 	if v.FlatTools || v.CompactMode {
 		for _, l := range body {
 			_, stripped := parseImageFootprint(l)
-			out = append(out, toolBodyLine(v.Theme, stripped, width, v.CompactMode))
+			out = append(out, flatToolBody(v.Theme, stripped))
 		}
 		return out
 	}
@@ -1109,13 +1085,6 @@ func splitToolLabel(label string) (name, rest string) {
 // name in the foreground color, and the argument summary muted. The
 // line is left-aligned at the same column the box's opening corner
 // used (toolBoxOuterMargin) so flat and box renders share a column.
-func toolHeaderLine(th Theme, label string, width int, compact bool) string {
-	if compact {
-		return compactToolHeader(th, label, width)
-	}
-	return flatToolHeader(th, label, width)
-}
-
 func flatToolHeader(th Theme, label string, width int) string {
 	label = oneLineToolLabel(label)
 	name, rest := splitToolLabel(label)
@@ -1140,48 +1109,6 @@ func flatToolHeader(th Theme, label string, width int) string {
 	return margin + gutter + th.FG256(th.FG, name) + th.FG256(th.Muted, rest)
 }
 
-func compactToolBlank(th Theme, width int) string {
-	if width < 1 {
-		width = 1
-	}
-	return sgrBGColor(th.UserBubbleBG) + strings.Repeat(" ", width) + reset
-}
-
-func compactToolHeader(th Theme, label string, width int) string {
-	label = oneLineToolLabel(label)
-	name, rest := splitToolLabel(label)
-	pad := "  "
-	avail := width - visibleWidth(pad)*2
-	if avail < 12 {
-		avail = 12
-	}
-	if visibleWidth(name+rest) > avail {
-		over := visibleWidth(name+rest) - avail
-		runes := []rune(rest)
-		if over+3 < len(runes) {
-			rest = string(runes[:len(runes)-over-3]) + "..."
-		} else if visibleWidth(name) <= avail {
-			rest = ""
-		}
-	}
-	plain := pad + name + rest
-	visible := visibleWidth(plain)
-	fill := ""
-	if visible < width {
-		fill = strings.Repeat(" ", width-visible)
-	}
-	bg := sgrBGColor(th.UserBubbleBG)
-	return bg + pad + sgrFG(th.FG) + name + bg + sgrFG(th.Muted) + rest + bg + fill + reset
-}
-
-func toolBodyLine(th Theme, line string, width int, compact bool) string {
-	line = flatToolBody(th, line)
-	if compact {
-		return compactToolBody(th, line, width)
-	}
-	return line
-}
-
 // flatToolBody indents a single body line for boxless rendering. It
 // trims the same leading padding box bodies do, then prepends a fixed
 // gutter indent so output sits in a readable column under the header
@@ -1190,16 +1117,6 @@ func flatToolBody(th Theme, line string) string {
 	_ = th
 	line = trimLeadingSpaces(line, toolBoxBodyTrimLeft)
 	return strings.Repeat(" ", toolBoxOuterMargin+2) + line
-}
-
-func compactToolBody(th Theme, line string, width int) string {
-	visible := visibleWidth(line)
-	fill := ""
-	if visible < width {
-		fill = strings.Repeat(" ", width-visible)
-	}
-	bg := sgrBGColor(th.UserBubbleBG)
-	return bg + strings.ReplaceAll(line, reset, reset+bg) + bg + fill + reset
 }
 
 // toolBoxBottom renders the bottom edge of a tool block:
