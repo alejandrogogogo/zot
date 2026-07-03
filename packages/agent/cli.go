@@ -49,7 +49,7 @@ func (h *interactiveExtHooks) Notify(extName, level, message string) {
 }
 func (h *interactiveExtHooks) Submit(text string) {
 	if iv := h.iv(); iv != nil {
-		iv.Submit(text)
+		iv.SubmitOrQueue(text, nil)
 	}
 }
 func (h *interactiveExtHooks) SubmitSlash(text string) {
@@ -183,7 +183,7 @@ func Run(rawArgs []string, version string) error {
 	if handled, err := runBotCommand(rawArgs, version); handled {
 		return err
 	}
-	if handled, err := runExtCommand(rawArgs); handled {
+	if handled, err := runExtCommand(rawArgs, version); handled {
 		return err
 	}
 	if handled, err := runUpdateCommand(rawArgs, version); handled {
