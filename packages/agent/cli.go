@@ -49,7 +49,7 @@ func (h *interactiveExtHooks) Notify(extName, level, message string) {
 }
 func (h *interactiveExtHooks) Submit(text string) {
 	if iv := h.iv(); iv != nil {
-		iv.SubmitOrQueue(text, nil)
+		iv.Submit(text)
 	}
 }
 func (h *interactiveExtHooks) SubmitSlash(text string) {
