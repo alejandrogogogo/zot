@@ -177,5 +177,8 @@ func truncatePreview(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-1] + "\u2026"
+	if n <= 3 {
+		return "..."[:n]
+	}
+	return s[:n-3] + "..."
 }

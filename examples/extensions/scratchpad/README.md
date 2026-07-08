@@ -37,7 +37,7 @@ The model also has a `read_notes` tool. Ask it:
 
 > "What did I tell you to remember?"
 
-…and it will call the tool and tell you.
+...and it will call the tool and tell you.
 
 ## Storage
 

@@ -108,7 +108,7 @@ func runUpdate(version string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	fmt.Println("zot update: querying latest release…")
+	fmt.Println("zot update: querying latest release...")
 	tag, releaseURL, err := fetchLatestRelease(ctx)
 	if err != nil {
 		return fmt.Errorf("query latest release: %w", err)
@@ -147,7 +147,7 @@ func runUpdate(version string) error {
 	// users can clear /tmp themselves.
 	defer func() { _ = os.RemoveAll(tmp) }()
 
-	fmt.Println("zot update: downloading checksums.txt…")
+	fmt.Println("zot update: downloading checksums.txt...")
 	sumsPath := filepath.Join(tmp, "checksums.txt")
 	if err := downloadFile(ctx, sumsURL, sumsPath); err != nil {
 		return fmt.Errorf("download checksums: %w", err)
@@ -157,13 +157,13 @@ func runUpdate(version string) error {
 		return err
 	}
 
-	fmt.Println("zot update: downloading archive…")
+	fmt.Println("zot update: downloading archive...")
 	archivePath := filepath.Join(tmp, assetName)
 	if err := downloadFile(ctx, assetURL, archivePath); err != nil {
 		return fmt.Errorf("download archive: %w", err)
 	}
 
-	fmt.Println("zot update: verifying checksum…")
+	fmt.Println("zot update: verifying checksum...")
 	gotSum, err := sha256File(archivePath)
 	if err != nil {
 		return fmt.Errorf("hash archive: %w", err)
@@ -172,7 +172,7 @@ func runUpdate(version string) error {
 		return fmt.Errorf("checksum mismatch for %s: got %s, want %s", assetName, gotSum, wantSum)
 	}
 
-	fmt.Println("zot update: extracting…")
+	fmt.Println("zot update: extracting...")
 	extractDir := filepath.Join(tmp, "extracted")
 	if err := os.MkdirAll(extractDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir extract: %w", err)

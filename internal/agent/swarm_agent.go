@@ -254,7 +254,10 @@ func truncateForLog(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	if n <= 3 {
+		return strings.Repeat(".", n)
+	}
+	return s[:n-3] + "..."
 }
 
 // _ keeps the provider import used; provider types may surface

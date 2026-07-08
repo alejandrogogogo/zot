@@ -165,10 +165,10 @@ func (d *rescueDialog) Render(th tui.Theme, width int) []string {
 		}
 	}
 	if start > 0 {
-		lines = append(lines, th.FG256(th.Muted, fmt.Sprintf("   … %d more above", start)))
+		lines = append(lines, th.FG256(th.Muted, fmt.Sprintf("   ... %d more above", start)))
 	}
 	if end < len(d.view) {
-		lines = append(lines, th.FG256(th.Muted, fmt.Sprintf("   … %d more below", len(d.view)-end)))
+		lines = append(lines, th.FG256(th.Muted, fmt.Sprintf("   ... %d more below", len(d.view)-end)))
 	}
 
 	lines = append(lines, frameRule(th, width))
@@ -278,7 +278,7 @@ func shortError(msg string) string {
 	if len(msg) <= max {
 		return msg
 	}
-	return msg[:max] + "…"
+	return msg[:max] + "..."
 }
 
 // extractFailedProvider tries to pull the failing provider name out

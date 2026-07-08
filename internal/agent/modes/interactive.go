@@ -799,7 +799,7 @@ func (i *Interactive) buildChatLocked(cols int) []string {
 		// narrow terminal.
 		line := "✓ " + i.statusOK
 		if cols > 4 && len(line) > cols {
-			line = line[:cols-1] + "…"
+			line = line[:cols-3] + "..."
 		}
 		chat = append(chat, i.cfg.Theme.FG256(i.cfg.Theme.Tool, line), "")
 	}
@@ -1305,7 +1305,7 @@ func clipBottomClippedImages(lines []string) []string {
 		// fixed status bar area. Suppress that image for this frame.
 		//
 		// When the image lives inside a tool box, the reservation rows
-		// are wrapped in vertical box edges ("│  …  │"); those rows
+		// are wrapped in vertical box edges ("│  ...  │"); those rows
 		// look non-blank under a naive whitespace check but are still
 		// reservation rows for this scan, so treat them as blank.
 		foundInfo := false
@@ -1329,7 +1329,7 @@ func clipBottomClippedImages(lines []string) []string {
 // stripping ANSI escape sequences, surrounding whitespace, and the
 // vertical box edges drawn by the tool-box renderer. Used by
 // clipBottomClippedImages so an image's reservation rows still count
-// as blank when those rows are wrapped in "│  …  │" inside a tool box.
+// as blank when those rows are wrapped in "│  ...  │" inside a tool box.
 func isBoxBlankLine(line string) bool {
 	stripped := stripANSIBytes(line)
 	stripped = strings.TrimSpace(stripped)
@@ -1338,7 +1338,7 @@ func isBoxBlankLine(line string) bool {
 	return stripped == ""
 }
 
-// stripANSIBytes removes ANSI CSI escape sequences (ESC '[' … final
+// stripANSIBytes removes ANSI CSI escape sequences (ESC '[' ... final
 // byte) from s without pulling in the regexp package. Mirrors the
 // internal helper in package tui; the duplicated copy avoids exporting
 // it just for one caller.
@@ -1423,10 +1423,10 @@ func truncateLine(s string, n int) string {
 	if len(runes) <= n {
 		return s
 	}
-	if n <= 1 {
-		return "…"
+	if n <= 3 {
+		return strings.Repeat(".", n)
 	}
-	return string(runes[:n-1]) + "…"
+	return string(runes[:n-3]) + "..."
 }
 
 // ctrlCExitWindow is how long after a ctrl+c press a *second* press
@@ -3626,7 +3626,7 @@ func (i *Interactive) startTurnWithImages(parent context.Context, prompt string,
 			i.queued = append([]string{prompt}, i.queued...)
 		}
 		i.statusErr = ""
-		i.extNotes = append(i.extNotes, autoCompactNoteLine(i.cfg.Theme, "context near limit — condensing history before sending…"))
+		i.extNotes = append(i.extNotes, autoCompactNoteLine(i.cfg.Theme, "context near limit — condensing history before sending..."))
 		i.pendingPostCompactNote = "context auto-compacted; sending your last message"
 		i.mu.Unlock()
 		i.invalidate()
@@ -4042,7 +4042,7 @@ func (i *Interactive) runReloadExt(ctx context.Context) {
 		return
 	}
 	i.mu.Lock()
-	i.statusOK = "reloading extensions…"
+	i.statusOK = "reloading extensions..."
 	i.statusErr = ""
 	i.mu.Unlock()
 	i.invalidate()

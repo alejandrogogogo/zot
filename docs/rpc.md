@@ -43,9 +43,9 @@ Every line in either direction is one JSON object terminated by `\n`. Object bou
 
 | `type` | Direction | Description |
 |---|---|---|
-| any command (`prompt`, `abort`, …) | client → server | Request |
+| any command (`prompt`, `abort`, ...) | client → server | Request |
 | `response` | server → client | Reply to one command, correlated by `id` |
-| any event (`text_delta`, `tool_call`, …) | server → client | Stream notification (no `id`) |
+| any event (`text_delta`, `tool_call`, ...) | server → client | Stream notification (no `id`) |
 
 ## Commands
 
