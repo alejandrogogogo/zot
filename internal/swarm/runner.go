@@ -209,6 +209,21 @@ func (r *execRunner) Run(ctx context.Context, sink Sink) error {
 				if ev, ok := parseEventLine(trimmed); ok {
 					_ = log.Append(ev)
 					applyEventToSink(ev, sink)
+					// Fan turn_end up to any subscriber on the
+					// supervised Agent. Daemons stay alive across
+					// many turns, so Wait()-style hooks would
+					// never fire; per-turn callbacks let auto-
+					// swarm summarise as each task completes.
+					if ev.Type == "turn_end" && r.agent != nil {
+						r.agent.mu.Lock()
+						fn := r.agent.OnTurnEnd
+						r.agent.mu.Unlock()
+						if fn != nil {
+							step, _ := ev.Data["step"].(float64)
+							errMsg, _ := ev.Data["error"].(string)
+							go fn(int(step), errMsg)
+						}
+					}
 				} else {
 					// Non-JSON output. Keep it as transcript so an
 					// accidental fmt.Println in the child still

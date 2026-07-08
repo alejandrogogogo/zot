@@ -325,6 +325,15 @@ type Interactive struct {
 	sessionTreeDialog *sessionTreeDialog
 	extPanel          *extPanelDialog
 
+	// swarmWatch tracks auto-swarm sub-agents the main agent spawned
+	// via swarm_spawn. Each entry holds the agent + the task text;
+	// a per-entry goroutine waits on the agent's terminal state. When
+	// every tracked entry has finished, the watcher flushes a single
+	// summary turn into the main chat (queued if the main agent is
+	// busy, run immediately if idle).
+	swarmWatchMu sync.Mutex
+	swarmWatch   []*swarmWatchEntry
+
 	// pendingFork is true when the user ran /session fork: the next
 	// jump-picker selection should branch off that message instead
 	// of scrolling. Flag resets after the action fires or the dialog
@@ -4418,6 +4427,110 @@ func (a telegramSenderAdapter) Active() bool {
 	return a.bridge != nil && a.bridge.Active()
 }
 
+// swarmWatchEntry is one tracked auto-swarm sub-agent. Filled in at
+// spawn time and finalised in trackSwarmAgent's waiter goroutine.
+type swarmWatchEntry struct {
+	agent *swarm.Agent
+	task  string
+	done  bool
+	err   string
+}
+
+// TrackSwarmAgent is the exported entry point used by the cli to
+// hand a freshly-spawned auto-swarm agent off to the watcher.
+func (i *Interactive) TrackSwarmAgent(a *swarm.Agent, task string) {
+	i.trackSwarmAgent(a, task)
+}
+
+// trackSwarmAgent records a freshly-spawned auto-swarm agent and
+// subscribes to its turn_end events. Sub-agents are long-lived
+// daemons that keep running on the inbox after the initial task,
+// so we can't wait on agent.Wait() — it never returns until the
+// whole daemon dies. Instead we mark each entry done on its first
+// turn_end (the initial task finishing), and when every tracked
+// entry has reported in, flush a single summary into the main chat.
+//
+// Wired in from cli.go via SwarmSpawnTool.OnSpawned only when auto-
+// swarm is enabled, so this is a no-op when the feature is off.
+func (i *Interactive) trackSwarmAgent(a *swarm.Agent, task string) {
+	if i == nil || a == nil {
+		return
+	}
+	entry := &swarmWatchEntry{agent: a, task: task}
+	i.swarmWatchMu.Lock()
+	i.swarmWatch = append(i.swarmWatch, entry)
+	i.swarmWatchMu.Unlock()
+
+	a.SetOnTurnEnd(func(step int, errMsg string) {
+		i.swarmWatchMu.Lock()
+		if entry.done {
+			i.swarmWatchMu.Unlock()
+			return
+		}
+		entry.done = true
+		entry.err = errMsg
+		allDone := true
+		for _, e := range i.swarmWatch {
+			if !e.done {
+				allDone = false
+				break
+			}
+		}
+		var batch []*swarmWatchEntry
+		if allDone {
+			batch = i.swarmWatch
+			i.swarmWatch = nil
+		}
+		i.swarmWatchMu.Unlock()
+		if len(batch) == 0 {
+			return
+		}
+		i.flushSwarmSummary(batch)
+	})
+}
+
+// flushSwarmSummary composes a synthetic user turn describing every
+// sub-agent's outcome and injects it via SubmitOrQueue so the main
+// agent picks it up at the next safe boundary. The summary is
+// phrased as a system update ("Auto-swarm finished: ...") so the
+// model treats it as observed state, not as a fresh user request.
+func (i *Interactive) flushSwarmSummary(batch []*swarmWatchEntry) {
+	if len(batch) == 0 {
+		return
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "[auto-swarm update] %d sub-agent(s) finished:\n\n", len(batch))
+	for idx, e := range batch {
+		snap := e.agent.Snapshot()
+		status := string(snap.Status)
+		task := snap.Task
+		if task == "" {
+			task = e.task
+		}
+		fmt.Fprintf(&sb, "%d. agent %s \u2014 status: %s\n", idx+1, snap.ID, status)
+		fmt.Fprintf(&sb, "   task: %s\n", truncateForSummary(task, 240))
+		if snap.Err != "" {
+			fmt.Fprintf(&sb, "   error: %s\n", truncateForSummary(snap.Err, 240))
+		} else if e.err != "" {
+			fmt.Fprintf(&sb, "   turn error: %s\n", truncateForSummary(e.err, 240))
+		}
+		if tail := strings.TrimSpace(snap.Tail); tail != "" {
+			fmt.Fprintf(&sb, "   tail: %s\n", truncateForSummary(tail, 600))
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("Briefly summarise the collective outcome for the user. Reference the agents by id. If any failed, suggest a follow-up; otherwise confirm completion. Do not spawn new sub-agents unless the user asks.")
+	i.SubmitOrQueue(sb.String(), nil)
+}
+
+func truncateForSummary(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-3] + "..."
+}
+
 // applyAutoSwarmSystemPrompt appends (active=true) or strips
 // (active=false) the auto-swarm system-prompt block on the running
 // agent so the model proactively considers swarm_spawn when the user
@@ -4463,8 +4576,9 @@ func (i *Interactive) applyAutoSwarmTool(active bool) {
 	}
 	if active && i.cfg.Swarm != nil {
 		next["swarm_spawn"] = &tools.SwarmSpawnTool{
-			Swarm:   i.cfg.Swarm,
-			Enabled: func() bool { return true },
+			Swarm:     i.cfg.Swarm,
+			Enabled:   func() bool { return true },
+			OnSpawned: i.trackSwarmAgent,
 		}
 	}
 	i.agent.SetTools(next)

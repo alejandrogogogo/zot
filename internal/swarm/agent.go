@@ -71,6 +71,14 @@ type Agent struct {
 	finished   time.Time
 	lastErr    error
 
+	// OnTurnEnd, if set, fires once per turn_end event the runner
+	// observes from the child daemon. Used by auto-swarm watchers
+	// to detect that a sub-agent's first (or n-th) task has
+	// finished without waiting for the long-lived daemon itself to
+	// exit — sub-agents keep running on the inbox even after the
+	// initial task completes, so Wait() never unblocks for them.
+	OnTurnEnd func(step int, errMsg string)
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	runner Runner
@@ -119,6 +127,16 @@ func (a *Agent) Err() error {
 // Wait blocks until the agent reaches a terminal state. Used by tests
 // and by /swarm wait <id>.
 func (a *Agent) Wait() { <-a.done }
+
+// SetOnTurnEnd installs (or clears, with nil) the per-turn callback
+// fired from the runner when the child daemon emits a turn_end
+// event. Safe to call from any goroutine: the runner reads the
+// callback under the same mutex.
+func (a *Agent) SetOnTurnEnd(fn func(step int, errMsg string)) {
+	a.mu.Lock()
+	a.OnTurnEnd = fn
+	a.mu.Unlock()
+}
 
 func (a *Agent) setStatus(s Status) {
 	a.mu.Lock()
