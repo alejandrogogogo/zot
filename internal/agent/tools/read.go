@@ -131,6 +131,9 @@ func (t *ReadTool) Execute(ctx context.Context, raw json.RawMessage, progress fu
 		sb.WriteString(line)
 		sb.WriteByte('\n')
 	}
+	if truncLines || truncBytes {
+		sb.WriteString("\n")
+	}
 	if truncLines {
 		sb.WriteString(fmt.Sprintf("... [truncated at %d lines]\n", maxReadLines))
 	}
