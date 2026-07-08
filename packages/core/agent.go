@@ -22,6 +22,14 @@ type Agent struct {
 	MaxSteps  int
 	Reasoning string
 
+	// MaxTokens caps the model's output tokens per turn. Zero leaves
+	// the field unset on the provider request, letting each provider
+	// apply its own default (which can be conservative — Bedrock
+	// defaults to 4096, truncating long writes/edits). Hosts populate
+	// this from the resolved model's MaxOutput so large single-turn
+	// responses aren't silently cut off with stopReason=length.
+	MaxTokens int
+
 	// BeforeToolExecute, if set, is called immediately before each
 	// tool runs. Returning (allowed=false, reason) short-circuits
 	// the call with an error result containing reason. Optionally,
@@ -515,6 +523,7 @@ func (a *Agent) oneTurn(ctx context.Context, sink func(AgentEvent)) (provider.St
 		Messages:  repairToolUseResultPairs(a.Messages()),
 		Tools:     a.Tools.Specs(),
 		Reasoning: a.Reasoning,
+		MaxTokens: a.MaxTokens,
 	}
 	stream, err := a.Client.Stream(ctx, req)
 	if err != nil {
