@@ -415,6 +415,8 @@ const resumeTailExpandStep = 80
 
 // NewInteractive constructs an Interactive from cfg.
 func NewInteractive(cfg InteractiveConfig) *Interactive {
+	renderer := tui.NewRenderer(cfg.Terminal)
+	renderer.SetTheme(cfg.Theme)
 	i := &Interactive{
 		cfg: cfg,
 		view: &tui.View{
@@ -425,7 +427,7 @@ func NewInteractive(cfg InteractiveConfig) *Interactive {
 		// speaker labels too, so the input gutter matches the rest
 		// of the UI.
 		ed:                tui.NewEditor(cfg.Theme.AccentBar(cfg.Theme.Accent)),
-		rend:              tui.NewRenderer(cfg.Terminal),
+		rend:              renderer,
 		toolCalls:         map[string]*tui.ToolCallView{},
 		dirty:             make(chan struct{}, 8),
 		dialog:            newLoginDialog(),
@@ -2709,6 +2711,7 @@ func (i *Interactive) applyThemeNow(name string) {
 	i.ed.Prompt = th.AccentBar(th.Accent)
 	i.spin.Configure(th)
 	if i.rend != nil {
+		i.rend.SetTheme(th)
 		i.rend.Clear()
 	}
 	i.invalidate()
