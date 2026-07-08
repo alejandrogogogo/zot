@@ -42,6 +42,26 @@ func ReasoningBudget(level string) int {
 	}
 }
 
+// AnthropicAdaptiveEffort maps zot's user-facing thinking levels onto the
+// effort enum used by Anthropic's adaptive-thinking models (Opus 4.7+).
+// These models reject explicit thinking budgets; thinking depth is
+// controlled by output_config.effort instead. Returns "" when reasoning
+// is disabled.
+func AnthropicAdaptiveEffort(level string) string {
+	switch NormalizeReasoning(level) {
+	case "minimum", "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "maximum":
+		return "xhigh"
+	default:
+		return ""
+	}
+}
+
 // OpenAIReasoningEffort maps zot's six-level setting onto the effort enum
 // accepted by OpenAI-compatible chat-completions endpoints.
 func OpenAIReasoningEffort(level string) string {
@@ -54,6 +74,29 @@ func OpenAIReasoningEffort(level string) string {
 		return "medium"
 	case "high", "maximum":
 		return "high"
+	default:
+		return ""
+	}
+}
+
+// OpenAICompatAnthropicEffort maps zot's user-facing thinking levels
+// onto reasoning_effort values when an adaptive-thinking Anthropic
+// model (Opus 4.7+) is served over the OpenAI-compatible chat-
+// completions wire (openrouter, opencode, ...). Differs from
+// OpenAIReasoningEffort only at the top: zot's "maximum" maps to
+// "xhigh" instead of being clamped to "high", so the model's full
+// adaptive-thinking ceiling is preserved when reachable through a
+// gateway that accepts the effort knob.
+func OpenAICompatAnthropicEffort(level string) string {
+	switch NormalizeReasoning(level) {
+	case "minimum", "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "maximum":
+		return "xhigh"
 	default:
 		return ""
 	}

@@ -185,7 +185,15 @@ func (c *openaiClient) buildRequest(req Request) (*oaiRequest, error) {
 	}
 	if m.Reasoning {
 		out.MaxCompletionTok = &maxTok
-		if effort := OpenAIReasoningEffort(req.Reasoning); effort != "" {
+		effort := OpenAIReasoningEffort(req.Reasoning)
+		if usesAdaptiveThinking(m) {
+			// Some gateways expose adaptive-thinking Anthropic models through
+			// the OpenAI-compatible chat-completions wire. They accept the
+			// same reasoning_effort knob, including the top "xhigh" tier;
+			// don't clamp zot's "maximum" to "high" for those models.
+			effort = OpenAICompatAnthropicEffort(req.Reasoning)
+		}
+		if effort != "" {
 			out.ReasoningEffort = effort
 		}
 	} else {

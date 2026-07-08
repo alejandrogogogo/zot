@@ -78,6 +78,67 @@ func TestOpenAIErrorStatus(t *testing.T) {
 	}
 }
 
+func TestAnthropicAdaptiveThinking(t *testing.T) {
+	c := NewAnthropic("x", "").(*anthropicClient)
+	temp := float32(0.7)
+
+	// Opus 4.8 -> adaptive thinking, effort set, no budget, no temperature.
+	wire, err := c.buildRequest(Request{
+		Model:       "claude-opus-4-8",
+		Reasoning:   "high",
+		Temperature: &temp,
+		Messages:    []Message{{Role: RoleUser, Content: []Content{TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wire.Thinking == nil || wire.Thinking.Type != "adaptive" {
+		t.Fatalf("want adaptive thinking, got %+v", wire.Thinking)
+	}
+	if wire.Thinking.BudgetTokens != 0 {
+		t.Fatalf("adaptive must not send budget_tokens, got %d", wire.Thinking.BudgetTokens)
+	}
+	if wire.OutputConfig == nil || wire.OutputConfig.Effort != "high" {
+		t.Fatalf("want effort=high, got %+v", wire.OutputConfig)
+	}
+	if wire.Temperature != nil {
+		t.Fatalf("adaptive must drop temperature, got %v", *wire.Temperature)
+	}
+
+	// maximum -> xhigh effort.
+	wire, err = c.buildRequest(Request{
+		Model:     "claude-opus-4-8",
+		Reasoning: "maximum",
+		Messages:  []Message{{Role: RoleUser, Content: []Content{TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wire.OutputConfig == nil || wire.OutputConfig.Effort != "xhigh" {
+		t.Fatalf("want effort=xhigh, got %+v", wire.OutputConfig)
+	}
+
+	// Opus 4.5 -> budget-based thinking, no output_config, temperature kept.
+	wire, err = c.buildRequest(Request{
+		Model:       "claude-opus-4-5",
+		Reasoning:   "high",
+		Temperature: &temp,
+		Messages:    []Message{{Role: RoleUser, Content: []Content{TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wire.Thinking == nil || wire.Thinking.Type != "enabled" || wire.Thinking.BudgetTokens <= 0 {
+		t.Fatalf("want budget thinking, got %+v", wire.Thinking)
+	}
+	if wire.OutputConfig != nil {
+		t.Fatalf("budget models must not send output_config, got %+v", wire.OutputConfig)
+	}
+	if wire.Temperature == nil || *wire.Temperature != temp {
+		t.Fatalf("budget model should keep temperature, got %v", wire.Temperature)
+	}
+}
+
 func TestAnthropicBuildRequestStripsAssistantImages(t *testing.T) {
 	c := NewAnthropic("x", "").(*anthropicClient)
 	wire, err := c.buildRequest(Request{
@@ -152,6 +213,33 @@ func TestAnthropicStreamHappyPath(t *testing.T) {
 	}
 	if done.Stop != StopEnd {
 		t.Fatalf("stop=%v", done.Stop)
+	}
+}
+
+func TestOpenAICompatAnthropicReasoningEffort(t *testing.T) {
+	c := NewOpenRouter("token", "").(*openaiClient)
+	wire, err := c.buildRequest(Request{
+		Model:     "anthropic/claude-opus-4.8",
+		Reasoning: "maximum",
+		Messages:  []Message{{Role: RoleUser, Content: []Content{TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wire.ReasoningEffort != "xhigh" {
+		t.Fatalf("want xhigh for adaptive Anthropic model over OpenAI-compatible wire, got %q", wire.ReasoningEffort)
+	}
+
+	wire, err = c.buildRequest(Request{
+		Model:     "gpt-5.1",
+		Reasoning: "maximum",
+		Messages:  []Message{{Role: RoleUser, Content: []Content{TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wire.ReasoningEffort != "high" {
+		t.Fatalf("want generic OpenAI-compatible maximum clamped to high, got %q", wire.ReasoningEffort)
 	}
 }
 
