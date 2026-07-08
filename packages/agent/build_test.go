@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/patriceckhart/zot/packages/provider"
 )
 
 func TestReadAgentsContextLoadsGlobalAndAncestors(t *testing.T) {
@@ -106,6 +108,73 @@ func TestResolveExplicitFlagStaleDoesNotRepairConfig(t *testing.T) {
 	cfg, _ := LoadConfig()
 	if cfg.Model != good {
 		t.Errorf("config.json was clobbered (was %q; now %q)", good, cfg.Model)
+	}
+}
+
+// TestResolveEnvOnlyBedrockDiscoveredWithoutConfig reproduces issue
+// #15: pointing ZOT_HOME at a fresh dir drops the persisted
+// config.json (which pinned provider=amazon-bedrock). Resolve must
+// still discover bedrock from the AWS env vars instead of falling back
+// to anthropic and reporting "not logged in".
+func TestResolveEnvOnlyBedrockDiscoveredWithoutConfig(t *testing.T) {
+	t.Setenv("ZOT_HOME", t.TempDir()) // fresh home: no config.json
+	// Disable the Kimi CLI token fallback so a developer machine with a
+	// real Kimi CLI login doesn't pre-empt bedrock in the scan.
+	if err := SetKimiCLIFallbackDisabled(true); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_BEARER_TOKEN_BEDROCK", "test-bedrock-token")
+	t.Setenv("AWS_REGION", "us-east-1")
+	// Make sure no other provider's env credential pre-empts bedrock.
+	for _, k := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "DEEPSEEK_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY"} {
+		t.Setenv(k, "")
+	}
+
+	r, err := Resolve(Args{}, true)
+	if err != nil {
+		t.Fatalf("Resolve errored with env-only bedrock: %v", err)
+	}
+	if r.Provider != "amazon-bedrock" {
+		t.Fatalf("provider = %q, want amazon-bedrock", r.Provider)
+	}
+	if !r.HasCredential() {
+		t.Fatalf("bedrock credential not resolved from env")
+	}
+}
+
+func TestResolveOllamaUsesModelBaseURLBeforeDefault(t *testing.T) {
+	t.Setenv("ZOT_HOME", t.TempDir())
+	provider.SetLiveModels(nil)
+	defer provider.SetLiveModels(nil)
+	provider.SetUserModels([]provider.Model{{
+		Provider:      "ollama",
+		ID:            "qwen-local",
+		DisplayName:   "Qwen Local",
+		ContextWindow: 32768,
+		MaxOutput:     8192,
+		BaseURL:       "http://localhost:8000/v1",
+	}})
+
+	r, err := Resolve(Args{Provider: "ollama", Model: "qwen-local"}, false)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if r.BaseURL != "http://localhost:8000/v1" {
+		t.Fatalf("BaseURL = %q, want models.json baseUrl", r.BaseURL)
+	}
+}
+
+func TestResolveOllamaFallsBackToDefaultBaseURL(t *testing.T) {
+	t.Setenv("ZOT_HOME", t.TempDir())
+	provider.SetLiveModels(nil)
+	defer provider.SetLiveModels(nil)
+
+	r, err := Resolve(Args{Provider: "ollama", Model: "any-local-model"}, false)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if r.BaseURL != "http://localhost:11434" {
+		t.Fatalf("BaseURL = %q, want ollama default", r.BaseURL)
 	}
 }
 
