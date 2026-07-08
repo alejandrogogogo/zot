@@ -183,6 +183,31 @@ func (c *openaiClient) buildRequest(req Request) (*oaiRequest, error) {
 	if maxTok <= 0 {
 		maxTok = m.MaxOutput
 	}
+	// Clamp max_tokens so output + minimum input fits within the context
+	// window. Some providers (OpenRouter) enforce input + max_output <=
+	// context_length and reject requests where the total exceeds it.
+	// This reservation ensures basic user input (system prompt + first
+	// message + tool definitions) has room.
+	//
+	// Use the smaller of ContextWindow and MaxOutput as the cap because
+	// some providers (OpenRouter) report inflated model-level context
+	// windows (e.g. 1000000) while the serving provider enforces a much
+	// tighter limit (e.g. 262144). When both are wrong we still land on
+	// the output cap, which is the actual limit reported by the provider.
+	if m.ContextWindow > 0 && m.MaxOutput > 0 {
+		ctxCap := m.ContextWindow
+		if m.MaxOutput < ctxCap {
+			ctxCap = m.MaxOutput
+		}
+		const reserve = 4096
+		clamped := ctxCap - reserve
+		if clamped < 1024 {
+			clamped = 1024
+		}
+		if maxTok > clamped {
+			maxTok = clamped
+		}
+	}
 	if m.Reasoning {
 		if maxTok > 0 {
 			out.MaxCompletionTok = &maxTok
