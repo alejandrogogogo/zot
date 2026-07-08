@@ -31,6 +31,13 @@ type SwarmSpawnTool struct {
 	// is treated as disabled.
 	Enabled func() bool
 
+	// DefaultModel and DefaultProvider return the host agent's resolved
+	// model and provider. They are used when the tool call omits both
+	// fields, so auto-swarm follows the same auth route as the user sees
+	// in the parent session.
+	DefaultModel    func() string
+	DefaultProvider func() string
+
 	// OnSpawned, if set, is called after every successful spawn with
 	// the new agent + the task it was started with. Used by the
 	// interactive host to track agents and surface a summary back
@@ -53,11 +60,11 @@ const swarmSpawnSchema = `{
     },
     "model": {
       "type": "string",
-      "description": "Optional model id to pin the sub-agent to (e.g. \"claude-sonnet-4-5\", \"gpt-5\"). Defaults to the host's current model."
+      "description": "Optional model id to pin the sub-agent to. Normally omit both model and provider so the sub-agent inherits the host session's resolved provider/model/auth route. Do not infer provider from model name. If you override this, also provide provider."
     },
     "provider": {
       "type": "string",
-      "description": "Optional provider id (e.g. \"anthropic\", \"openai\"). Usually paired with model."
+      "description": "Optional provider id. Normally omit both model and provider so the sub-agent inherits the host session. If you override this, also provide model. Note: openai means public OpenAI API-key auth; openai-codex means ChatGPT/Codex subscription auth."
     }
   },
   "required": ["task"]
@@ -85,10 +92,24 @@ func (t *SwarmSpawnTool) Execute(ctx context.Context, raw json.RawMessage, progr
 		return toolErr("swarm_spawn: task is required"), nil
 	}
 
+	model := strings.TrimSpace(a.Model)
+	providerID := strings.TrimSpace(a.Provider)
+	if (model == "") != (providerID == "") {
+		return toolErr("swarm_spawn: omit both model/provider to inherit the host, or provide both explicitly"), nil
+	}
+	if model == "" && providerID == "" {
+		if t.DefaultModel != nil {
+			model = strings.TrimSpace(t.DefaultModel())
+		}
+		if t.DefaultProvider != nil {
+			providerID = strings.TrimSpace(t.DefaultProvider())
+		}
+	}
+
 	agent, err := t.Swarm.SpawnReq(ctx, swarm.SpawnRequest{
 		Task:     task,
-		Model:    strings.TrimSpace(a.Model),
-		Provider: strings.TrimSpace(a.Provider),
+		Model:    model,
+		Provider: providerID,
 	})
 	if err != nil {
 		return core.ToolResult{}, fmt.Errorf("swarm_spawn: %w", err)
@@ -100,11 +121,11 @@ func (t *SwarmSpawnTool) Execute(ctx context.Context, raw json.RawMessage, progr
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "spawned sub-agent %s\n", agent.ID)
 	fmt.Fprintf(&sb, "task: %s\n", truncateTask(task, 200))
-	if a.Model != "" {
-		fmt.Fprintf(&sb, "model: %s\n", a.Model)
+	if model != "" {
+		fmt.Fprintf(&sb, "model: %s\n", model)
 	}
-	if a.Provider != "" {
-		fmt.Fprintf(&sb, "provider: %s\n", a.Provider)
+	if providerID != "" {
+		fmt.Fprintf(&sb, "provider: %s\n", providerID)
 	}
 	sb.WriteString("\nThe sub-agent is running in the background. Use /swarm in the TUI to monitor it. ")
 	sb.WriteString("This conversation continues immediately; do not wait for the sub-agent to finish before working on the next thing.")
@@ -113,8 +134,8 @@ func (t *SwarmSpawnTool) Execute(ctx context.Context, raw json.RawMessage, progr
 		Details: map[string]any{
 			"agent_id": agent.ID,
 			"task":     task,
-			"model":    a.Model,
-			"provider": a.Provider,
+			"model":    model,
+			"provider": providerID,
 		},
 	}, nil
 }
