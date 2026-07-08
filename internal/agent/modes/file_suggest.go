@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/patriceckhart/zot/internal/tui"
 )
@@ -21,6 +22,13 @@ type fileSuggester struct {
 	browseRel   string // relative path from cwd we're currently browsing ("" = cwd itself)
 	cachedDir   string // absolute directory we last scanned
 	cachedAll   []fileEntry
+	// cachedMTime is the mtime of cachedDir at the time of the scan.
+	// scan() compares the current mtime against this on every call and
+	// re-reads the directory if it has changed, so files or folders
+	// created mid-session show up in the picker without restarting zot.
+	// Stat is cheap (single syscall) so doing it per keystroke while
+	// the popup is open does not impact responsiveness.
+	cachedMTime time.Time
 }
 
 type fileEntry struct {
@@ -49,10 +57,21 @@ func (s *fileSuggester) browseDir() string {
 	return filepath.Join(s.cwd, s.browseRel)
 }
 
-// scan reads entries from the current browse directory (cached).
+// scan reads entries from the current browse directory.
+//
+// Results are cached by absolute path + mtime: a repeated call against
+// the same directory returns the cached slice when nothing has changed
+// on disk, and re-reads when an entry was added, removed, or renamed
+// (any of which bumps the directory's mtime on every filesystem zot
+// supports). A failed stat falls through to a fresh ReadDir rather
+// than returning a stale cache so transient errors self-heal.
 func (s *fileSuggester) scan() []fileEntry {
 	dir := s.browseDir()
-	if s.cachedDir == dir && s.cachedAll != nil {
+	var mtime time.Time
+	if info, err := os.Stat(dir); err == nil {
+		mtime = info.ModTime()
+	}
+	if s.cachedDir == dir && s.cachedAll != nil && !mtime.IsZero() && mtime.Equal(s.cachedMTime) {
 		return s.cachedAll
 	}
 	entries, err := os.ReadDir(dir)
@@ -80,6 +99,7 @@ func (s *fileSuggester) scan() []fileEntry {
 	})
 	s.cachedAll = all
 	s.cachedDir = dir
+	s.cachedMTime = mtime
 	return all
 }
 
