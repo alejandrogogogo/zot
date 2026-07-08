@@ -91,8 +91,15 @@ try {
   Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $archiveUrl -OutFile (Join-Path $tmp $archive)
 
   Msg "verifying checksum"
-  $checksums = Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $checksumUrl | Select-Object -ExpandProperty Content
-  $expected  = ($checksums -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match ("\s" + [regex]::Escape($archive) + "$") } | Select-Object -First 1)
+  $checksumFile = Join-Path $tmp "checksums.txt"
+  Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $checksumUrl -OutFile $checksumFile
+  $expected = Get-Content -LiteralPath $checksumFile | ForEach-Object {
+    $line = $_.Trim()
+    if ($line) {
+      $parts = $line -split "\s+"
+      if ($parts.Count -ge 2 -and $parts[($parts.Count - 1)] -eq $archive) { $line }
+    }
+  } | Select-Object -First 1
   if (-not $expected) { Die "no checksum for $archive in checksums.txt" }
   $expectedHash = ($expected -split "\s+")[0]
 
