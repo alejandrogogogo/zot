@@ -217,6 +217,78 @@ func TestFileSuggesterRecursiveHonorsGitignore(t *testing.T) {
 	}
 }
 
+// TestFileSuggesterFlatModeHonorsGitignore verifies the default
+// directory-by-directory browse also hides gitignored entries and
+// always hides .git.
+func TestFileSuggesterFlatModeHonorsGitignore(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, ".gitignore"), []byte("node_modules/\n*.log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmp, "node_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmp, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "debug.log"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "main.go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := newFileSuggester()
+	s.SetCWD(tmp) // flat mode, respectGitignore on by default
+
+	all := s.scan()
+	if containsEntry(all, "node_modules", true) {
+		t.Fatal("flat scan surfaced gitignored node_modules/")
+	}
+	if containsEntry(all, ".git", true) {
+		t.Fatal("flat scan surfaced .git/")
+	}
+	if containsEntry(all, "debug.log", false) {
+		t.Fatal("flat scan surfaced gitignored *.log file")
+	}
+	if !containsEntry(all, "main.go", false) {
+		t.Fatalf("flat scan missing tracked main.go: %#v", all)
+	}
+	// .gitignore itself is not ignored, so it should remain visible.
+	if !containsEntry(all, ".gitignore", false) {
+		t.Fatalf("flat scan missing .gitignore: %#v", all)
+	}
+}
+
+// TestFileSuggesterRespectGitignoreToggle verifies disabling the
+// setting surfaces gitignored entries in both modes (while .git stays
+// hidden in recursive mode to protect the entry budget).
+func TestFileSuggesterRespectGitignoreToggle(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, ".gitignore"), []byte("dist/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmp, "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := newFileSuggester()
+	s.SetCWD(tmp)
+
+	// On by default: dist/ hidden.
+	if containsEntry(s.scan(), "dist", true) {
+		t.Fatal("dist/ should be hidden while respectGitignore is on")
+	}
+	// Toggle off: dist/ visible (flat mode).
+	s.SetRespectGitignore(false)
+	if !containsEntry(s.scan(), "dist", true) {
+		t.Fatal("dist/ should be visible after disabling respectGitignore (flat)")
+	}
+	// And in recursive mode.
+	s.SetRecursive(true)
+	if !containsEntry(s.scan(), "dist", true) {
+		t.Fatal("dist/ should be visible after disabling respectGitignore (recursive)")
+	}
+}
+
 // TestFileSuggesterToggleResetsCache verifies SetRecursive drops the
 // cached scan so the next matches() reflects the new mode.
 func TestFileSuggesterToggleResetsCache(t *testing.T) {

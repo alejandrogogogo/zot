@@ -38,6 +38,12 @@ type Config struct {
 	// directory browse. Toggle from /settings.
 	RecursiveFileSuggest *bool `json:"recursive_file_suggest,omitempty"`
 
+	// RespectGitignore controls whether the @-mention file picker hides
+	// files and directories matched by the project's root .gitignore (in
+	// both flat and recursive modes). nil/missing means the default,
+	// which is on; false shows ignored entries. Toggle from /settings.
+	RespectGitignore *bool `json:"respect_gitignore,omitempty"`
+
 	// LastChangelogShown is the version whose release-notes
 	// dialog the user has already seen. When the running binary's
 	// version differs, the next interactive run shows the

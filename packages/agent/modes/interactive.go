@@ -51,6 +51,11 @@ type InteractiveConfig struct {
 	// whole project tree instead of browsing one directory at a time.
 	RecursiveFileSuggest *bool
 
+	// RespectGitignore mirrors the persisted respect_gitignore flag at
+	// startup. nil means the default (on); when false the @-mention
+	// picker shows files matched by the project's root .gitignore.
+	RespectGitignore *bool
+
 	// ThemeName mirrors the persisted config theme value. Empty means auto.
 	ThemeName string
 	// ExtensionThemes returns themes bundled with loaded extensions.
@@ -234,6 +239,7 @@ type SettingsStore interface {
 	SetInlineImages(enabled bool) error
 	SetAutoSwarm(enabled bool) error
 	SetRecursiveFileSuggest(enabled bool) error
+	SetRespectGitignore(enabled bool) error
 	SetReasoning(level string) error
 	SetTheme(name string) error
 }
@@ -481,6 +487,7 @@ func NewInteractive(cfg InteractiveConfig) *Interactive {
 		inputHistoryIndex: -1,
 	}
 	i.fileSuggest.SetRecursive(cfg.RecursiveFileSuggest != nil && *cfg.RecursiveFileSuggest)
+	i.fileSuggest.SetRespectGitignore(cfg.RespectGitignore == nil || *cfg.RespectGitignore)
 	if cfg.Agent != nil {
 		i.agent = cfg.Agent
 		i.view.Messages = cfg.Agent.Messages()
@@ -2630,6 +2637,7 @@ func (i *Interactive) openSettingsDialog() {
 	}
 
 	recursiveFiles := i.cfg.RecursiveFileSuggest != nil && *i.cfg.RecursiveFileSuggest
+	respectGitignore := i.cfg.RespectGitignore == nil || *i.cfg.RespectGitignore
 
 	reasoningOptions := []settingsOption{
 		{value: "", label: "off", desc: "no reasoning"},
@@ -2699,6 +2707,12 @@ func (i *Interactive) openSettingsDialog() {
 			label: "recursive @-file search",
 			desc:  "fuzzy-search the whole project tree when picking files with @ instead of browsing one directory at a time",
 			value: recursiveFiles,
+		},
+		{
+			key:   "respect_gitignore",
+			label: "hide gitignored files in @-picker",
+			desc:  "skip files and directories matched by the project's root .gitignore (and .git) when picking files with @",
+			value: respectGitignore,
 		},
 		{
 			key:     "reasoning",
@@ -2798,6 +2812,22 @@ func (i *Interactive) applySettingToggle(key string, value bool) {
 		i.fileSuggest.SetRecursive(value)
 		i.mu.Lock()
 		i.statusOK = "recursive @-file search " + onOff(value)
+		i.statusErr = ""
+		i.mu.Unlock()
+	case "respect_gitignore":
+		val := value
+		i.cfg.RespectGitignore = &val
+		if i.cfg.SettingsStore != nil {
+			if err := i.cfg.SettingsStore.SetRespectGitignore(value); err != nil {
+				i.mu.Lock()
+				i.statusErr = "settings: " + err.Error()
+				i.mu.Unlock()
+				return
+			}
+		}
+		i.fileSuggest.SetRespectGitignore(value)
+		i.mu.Lock()
+		i.statusOK = "hide gitignored files in @-picker " + onOff(value)
 		i.statusErr = ""
 		i.mu.Unlock()
 	}
