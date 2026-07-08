@@ -20,8 +20,8 @@ import (
 // occur if the test goroutine alternated between writing and reading
 // a synchronous pipe.
 type extHarness struct {
-	ext   *Extension
-	hostW *io.PipeWriter // test writes here → ext reads as stdin
+	ext    *Extension
+	hostW  *io.PipeWriter // test writes here → ext reads as stdin
 	frames chan rawFrame  // ext→host frames delivered here
 }
 
@@ -249,9 +249,11 @@ func TestBlockingToolDenied(t *testing.T) {
 	h.ext.OnPanelKey(pid, func(key, text string) {
 		switch {
 		case key == "rune" && text == "y":
-			h.ext.ClosePanel(pid); approved <- true
+			h.ext.ClosePanel(pid)
+			approved <- true
 		case key == "rune" && text == "n", key == "esc":
-			h.ext.ClosePanel(pid); approved <- false
+			h.ext.ClosePanel(pid)
+			approved <- false
 		}
 	}, func() { approved <- false })
 
