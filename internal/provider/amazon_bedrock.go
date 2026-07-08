@@ -205,8 +205,8 @@ type bedrockToolSpec struct {
 }
 
 type bedrockRequest struct {
-	Messages []bedrockMessage `json:"messages"`
-	System   []map[string]string `json:"system,omitempty"`
+	Messages        []bedrockMessage    `json:"messages"`
+	System          []map[string]string `json:"system,omitempty"`
 	InferenceConfig struct {
 		MaxTokens   int      `json:"maxTokens,omitempty"`
 		Temperature *float32 `json:"temperature,omitempty"`
@@ -445,9 +445,9 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 		case "metadata":
 			var d struct {
 				Usage struct {
-					InputTokens         int `json:"inputTokens"`
-					OutputTokens        int `json:"outputTokens"`
-					CacheReadInputTokens int `json:"cacheReadInputTokens"`
+					InputTokens           int `json:"inputTokens"`
+					OutputTokens          int `json:"outputTokens"`
+					CacheReadInputTokens  int `json:"cacheReadInputTokens"`
 					CacheWriteInputTokens int `json:"cacheWriteInputTokens"`
 				} `json:"usage"`
 			}
