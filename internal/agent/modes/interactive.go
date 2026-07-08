@@ -2907,7 +2907,7 @@ func (i *Interactive) openLogoutDialog() {
 	}
 
 	var items []logoutItem
-	for _, p := range []string{"anthropic", "openai", "kimi", "google"} {
+	for _, p := range []string{"anthropic", "kimi", "google"} {
 		if creds.Has(p) {
 			method := creds.Method(p)
 			if method == "oauth" {
@@ -2919,6 +2919,12 @@ func (i *Interactive) openLogoutDialog() {
 				method: method,
 			})
 		}
+	}
+	if creds.OpenAI.APIKey != "" {
+		items = append(items, logoutItem{label: providerLabel("openai"), target: "openai", method: "api key"})
+	}
+	if creds.OpenAI.OAuth != nil {
+		items = append(items, logoutItem{label: providerLabel("openai-codex"), target: "openai-codex", method: "subscription"})
 	}
 	if len(items) == 0 {
 		i.mu.Lock()
@@ -2960,12 +2966,12 @@ func (i *Interactive) doLogout(target string) {
 	var providers []string
 	switch target {
 	case "", "all":
-		providers = []string{"anthropic", "openai", "kimi", "google"}
-	case "anthropic", "openai", "kimi", "google":
+		providers = []string{"anthropic", "openai", "openai-codex", "kimi", "google"}
+	case "anthropic", "openai", "openai-codex", "kimi", "google":
 		providers = []string{target}
 	default:
 		i.mu.Lock()
-		i.statusErr = "unknown provider: " + target + " (use anthropic, openai, kimi, google, or all)"
+		i.statusErr = "unknown provider: " + target + " (use anthropic, openai, openai-codex, kimi, google, or all)"
 		i.mu.Unlock()
 		return
 	}
@@ -2973,7 +2979,16 @@ func (i *Interactive) doLogout(target string) {
 	var errs []string
 	clearedCurrent := false
 	for _, p := range providers {
-		if err := store.Clear(p); err != nil {
+		var err error
+		switch p {
+		case "openai":
+			err = store.ClearAPIKey("openai")
+		case "openai-codex":
+			err = store.ClearOAuth("openai")
+		default:
+			err = store.Clear(p)
+		}
+		if err != nil {
 			errs = append(errs, p+": "+err.Error())
 			continue
 		}

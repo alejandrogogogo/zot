@@ -245,12 +245,8 @@ var Catalog = []Model{
 	},
 
 	// ---- Speculative: OpenAI ----
-	// Context windows on the OpenAI gpt-5.x family differ by route:
-	// the direct API advertises 400k, the ChatGPT Codex OAuth backend
-	// caps at 272k. zot serves both auth modes from one catalog row
-	// per id, so we pin to the smaller number to keep the context-usage
-	// meter honest under subscription auth. Users on the direct API
-	// simply see a conservative headroom estimate.
+	// Public OpenAI API route. The ChatGPT/Codex subscription route is
+	// represented separately below as provider "openai-codex".
 	{
 		Provider: "openai", ID: "gpt-5.1", DisplayName: "GPT-5.1",
 		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
@@ -279,12 +275,7 @@ var Catalog = []Model{
 	},
 	{
 		Provider: "openai", ID: "gpt-5.4-mini", DisplayName: "GPT-5.4 mini",
-		// ContextWindow: 400k on the OpenAI direct API, 272k on the
-		// ChatGPT Codex OAuth backend. We pin to the smaller Codex
-		// cap so the context-usage meter is honest under subscription
-		// auth; direct-API users simply see a conservative headroom
-		// estimate rather than an inflated one.
-		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
+		ContextWindow: 400000, MaxOutput: 128000, Reasoning: true,
 		PriceInput: 0.75, PriceOutput: 4.50, PriceCacheRead: 0.075,
 		Speculative: true,
 	},
@@ -297,6 +288,52 @@ var Catalog = []Model{
 	{
 		Provider: "openai", ID: "gpt-5.5-mini", DisplayName: "GPT-5.5 mini",
 		ContextWindow: 400000, MaxOutput: 128000, Reasoning: true,
+		PriceInput: 0.75, PriceOutput: 4.50, PriceCacheRead: 0.075,
+		Speculative: true,
+	},
+
+	// ---- OpenAI Codex / ChatGPT subscription backend ----
+	// Same model ids as the OpenAI family, but routed through the
+	// ChatGPT Codex OAuth backend rather than api.openai.com.
+	{
+		Provider: "openai-codex", ID: "gpt-5.2", DisplayName: "GPT-5.2 Codex",
+		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
+		PriceInput: 1.75, PriceOutput: 14.00, PriceCacheRead: 0.175,
+		Speculative: true,
+	},
+	{
+		Provider: "openai-codex", ID: "gpt-5.3-codex", DisplayName: "GPT-5.3 Codex",
+		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
+		PriceInput: 1.75, PriceOutput: 14.00, PriceCacheRead: 0.175,
+		Speculative: true,
+	},
+	{
+		Provider: "openai-codex", ID: "gpt-5.3-codex-spark", DisplayName: "GPT-5.3 Codex Spark",
+		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
+		PriceInput: 1.75, PriceOutput: 14.00, PriceCacheRead: 0.175,
+		Speculative: true,
+	},
+	{
+		Provider: "openai-codex", ID: "gpt-5.4", DisplayName: "GPT-5.4 Codex",
+		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
+		PriceInput: 2.50, PriceOutput: 15.00, PriceCacheRead: 0.25,
+		Speculative: true,
+	},
+	{
+		Provider: "openai-codex", ID: "gpt-5.4-mini", DisplayName: "GPT-5.4 mini Codex",
+		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
+		PriceInput: 0.75, PriceOutput: 4.50, PriceCacheRead: 0.075,
+		Speculative: true,
+	},
+	{
+		Provider: "openai-codex", ID: "gpt-5.5", DisplayName: "GPT-5.5 Codex",
+		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
+		PriceInput: 2.50, PriceOutput: 15.00, PriceCacheRead: 0.25,
+		Speculative: true,
+	},
+	{
+		Provider: "openai-codex", ID: "gpt-5.5-mini", DisplayName: "GPT-5.5 mini Codex",
+		ContextWindow: 272000, MaxOutput: 128000, Reasoning: true,
 		PriceInput: 0.75, PriceOutput: 4.50, PriceCacheRead: 0.075,
 		Speculative: true,
 	},

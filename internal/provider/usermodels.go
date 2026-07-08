@@ -70,11 +70,10 @@ func LoadUserModels(path string) []Model {
 
 	var out []Model
 	for providerName, prov := range file.Providers {
-		// Normalize provider name: strip suffixes like "-codex" so
-		// "openai-codex" maps to "openai".
+		// Normalize legacy transport aliases to their provider names.
 		normalized := providerName
 		switch providerName {
-		case "openai-codex", "openai-responses":
+		case "openai-responses":
 			normalized = "openai"
 		case "anthropic-messages":
 			normalized = "anthropic"

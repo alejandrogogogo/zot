@@ -23,8 +23,9 @@ type Credentials struct {
 	DeepSeek  ProviderCreds `json:"deepseek,omitempty"`
 }
 
-// ProviderCreds holds credentials for a single provider. Only one of
-// APIKey or OAuth is populated at a time.
+// ProviderCreds holds credentials for a single provider. Most providers
+// use either APIKey or OAuth; OpenAI may store both so the public API
+// route and ChatGPT/Codex subscription route can coexist.
 type ProviderCreds struct {
 	APIKey string      `json:"api_key,omitempty"`
 	OAuth  *OAuthToken `json:"oauth,omitempty"`
@@ -138,7 +139,9 @@ func (s *Store) SetAPIKey(provider, key string) error {
 		return fmt.Errorf("unknown provider %q", provider)
 	}
 	p.APIKey = key
-	p.OAuth = nil
+	if provider != "openai" {
+		p.OAuth = nil
+	}
 	return s.saveLocked(c)
 }
 
@@ -154,7 +157,9 @@ func (s *Store) SetOAuth(provider string, tok OAuthToken) error {
 	if p == nil {
 		return fmt.Errorf("unknown provider %q", provider)
 	}
-	p.APIKey = ""
+	if provider != "openai" {
+		p.APIKey = ""
+	}
 	p.OAuth = &tok
 	return s.saveLocked(c)
 }
@@ -172,6 +177,38 @@ func (s *Store) Clear(provider string) error {
 		return fmt.Errorf("unknown provider %q", provider)
 	}
 	*p = ProviderCreds{}
+	return s.saveLocked(c)
+}
+
+// ClearAPIKey removes only the API key for provider, preserving any OAuth token.
+func (s *Store) ClearAPIKey(provider string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	p := c.get(provider)
+	if p == nil {
+		return fmt.Errorf("unknown provider %q", provider)
+	}
+	p.APIKey = ""
+	return s.saveLocked(c)
+}
+
+// ClearOAuth removes only the OAuth token for provider, preserving any API key.
+func (s *Store) ClearOAuth(provider string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	p := c.get(provider)
+	if p == nil {
+		return fmt.Errorf("unknown provider %q", provider)
+	}
+	p.OAuth = nil
 	return s.saveLocked(c)
 }
 

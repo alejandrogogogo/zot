@@ -57,7 +57,7 @@ func NewOpenAICodex(token, accountID, baseURL string) Client {
 	}
 }
 
-func (c *codexClient) Name() string { return "openai" }
+func (c *codexClient) Name() string { return "openai-codex" }
 
 // ---- Responses API wire types (subset needed for zot's surface) ----
 
@@ -146,7 +146,10 @@ type codexRequest struct {
 // ---- Request building ----
 
 func (c *codexClient) buildRequest(req Request) (*codexRequest, error) {
-	m, err := FindModel("openai", req.Model)
+	m, err := FindModel("openai-codex", req.Model)
+	if err != nil {
+		m, err = FindModel("openai", req.Model)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -324,8 +327,11 @@ func (c *codexClient) runStream(ctx context.Context, resp *http.Response, req Re
 	defer close(out)
 	defer resp.Body.Close()
 
-	model, _ := FindModel("openai", req.Model)
-	out <- EventStart{Model: req.Model, Provider: "openai"}
+	model, _ := FindModel("openai-codex", req.Model)
+	if model.ID == "" {
+		model, _ = FindModel("openai", req.Model)
+	}
+	out <- EventStart{Model: req.Model, Provider: "openai-codex"}
 
 	raw := make(chan sseEvent, 16)
 	go readSSE(resp.Body, raw)

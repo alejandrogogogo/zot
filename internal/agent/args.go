@@ -357,7 +357,7 @@ func PrintHelp(version string) {
 		row{"zot tg ...", "short alias for telegram-bot"},
 	)
 	section("provider and model flags",
-		row{"--provider", "provider to use (anthropic|openai|kimi|deepseek|google|ollama)"},
+		row{"--provider", "provider to use (anthropic|openai|openai-codex|kimi|deepseek|google|ollama)"},
 		row{"--model ID", "model id (see --list-models)"},
 		row{"--api-key KEY", "api key for this run (env / auth.json fallback)"},
 		row{"--base-url URL", "override provider api base url"},
