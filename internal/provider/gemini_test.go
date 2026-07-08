@@ -206,6 +206,42 @@ func TestGeminiBuildRequestSystemAndTools(t *testing.T) {
 
 // TestGeminiBuildRequestImageModelOmitsTools confirms image-generation
 // models receive direct multimodal prompts without function declarations.
+func TestGeminiBuildRequestStripsUnsupportedSchemaFields(t *testing.T) {
+	c := NewGemini("k", "https://example.invalid").(*geminiClient)
+	wire, _, err := c.buildRequest(Request{
+		Model: "gemini-2.5-pro",
+		Tools: []Tool{{
+			Name:        "edit",
+			Description: "edit a file",
+			Schema: json.RawMessage(`{
+				"$schema":"http://json-schema.org/draft-07/schema#",
+				"type":"object",
+				"additionalProperties":false,
+				"properties":{
+					"edits":{
+						"type":"array",
+						"items":{
+							"type":"object",
+							"additionalProperties":false,
+							"properties":{"oldText":{"type":"string"},"newText":{"type":"string"}}
+						}
+					}
+				}
+			}`),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(wire.Tools[0].FunctionDeclarations[0].Parameters)
+	if strings.Contains(got, "additionalProperties") || strings.Contains(got, "$schema") {
+		t.Fatalf("Gemini schema should strip unsupported fields, got %s", got)
+	}
+	if !strings.Contains(got, `"oldText"`) || !strings.Contains(got, `"newText"`) {
+		t.Fatalf("Gemini schema lost nested properties, got %s", got)
+	}
+}
+
 func TestGeminiBuildRequestImageModelOmitsTools(t *testing.T) {
 	c := NewGemini("k", "https://example.invalid").(*geminiClient)
 	wire, _, err := c.buildRequest(Request{
