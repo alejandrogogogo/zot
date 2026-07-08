@@ -131,6 +131,301 @@ func TestNormalizeBedrockToolResultsInjectsMissingResult(t *testing.T) {
 	}
 }
 
+func TestBedrockModelSupportsCaching(t *testing.T) {
+	cases := []struct {
+		model string
+		want  bool
+	}{
+		// Bare Claude IDs (as they come from catalog_builtin)
+		{"anthropic.claude-sonnet-4-5-20250929-v1:0", true},
+		{"anthropic.claude-haiku-4-5-20251001-v1:0", true},
+		{"anthropic.claude-opus-4-5-20251101-v1:0", true},
+		// Geo-prefixed (resolved form that arrives at bedrockModelSupportsCaching)
+		{"us.anthropic.claude-sonnet-4-5-20250929-v1:0", true},
+		{"eu.anthropic.claude-haiku-4-5-20251001-v1:0", true},
+		{"global.anthropic.claude-opus-4-5-20251101-v1:0", true},
+		// Nova models have PriceCacheWrite==0 — they use automatic caching
+		{"amazon.nova-pro-v1:0", false},
+		{"amazon.nova-lite-v1:0", false},
+		{"amazon.nova-micro-v1:0", false},
+		// DeepSeek — no cache write price
+		{"deepseek.r1-v1:0", false},
+		// Unknown model with claude prefix
+		{"anthropic.claude-future-v99:0", true},
+		// Unknown non-claude model
+		{"some.unknown-model-v1:0", false},
+	}
+	for _, c := range cases {
+		got := bedrockModelSupportsCaching(c.model)
+		if got != c.want {
+			t.Errorf("bedrockModelSupportsCaching(%q) = %v, want %v", c.model, got, c.want)
+		}
+	}
+}
+
+func TestBedrockBuildRequestCachingClaudeModel(t *testing.T) {
+	// A Claude model (PriceCacheWrite > 0) should get cachePoint markers
+	// in the system array and on the last user message.
+	client := &bedrockClient{region: "us-east-1"}
+	req, err := client.buildRequest(Request{
+		Model:  "anthropic.claude-sonnet-4-5-20250929-v1:0",
+		System: "You are a helpful assistant.",
+		Messages: []Message{
+			{Role: RoleUser, Content: []Content{TextBlock{Text: "hello"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// system should be: [{text: ...}, {cachePoint: {type: default}}]
+	if len(req.System) != 2 {
+		t.Fatalf("system len = %d, want 2 (text + cachePoint)", len(req.System))
+	}
+	if _, ok := req.System[0]["text"]; !ok {
+		t.Errorf("system[0] missing text key: %v", req.System[0])
+	}
+	if _, ok := req.System[1]["cachePoint"]; !ok {
+		t.Errorf("system[1] missing cachePoint key: %v", req.System[1])
+	}
+
+	// last user message should end with a cachePoint block
+	if len(req.Messages) == 0 {
+		t.Fatal("no messages")
+	}
+	lastMsg := req.Messages[len(req.Messages)-1]
+	if lastMsg.Role != "user" {
+		t.Fatalf("last message role = %q, want user", lastMsg.Role)
+	}
+	lastBlock := lastMsg.Content[len(lastMsg.Content)-1]
+	if _, ok := lastBlock["cachePoint"]; !ok {
+		t.Errorf("last user message final block missing cachePoint: %v", lastBlock)
+	}
+}
+
+func TestBedrockBuildRequestNoCachingNovaModel(t *testing.T) {
+	// A Nova model (PriceCacheWrite == 0) should NOT get cachePoint markers.
+	client := &bedrockClient{region: "us-east-1"}
+	req, err := client.buildRequest(Request{
+		Model:  "amazon.nova-pro-v1:0",
+		System: "You are helpful.",
+		Messages: []Message{
+			{Role: RoleUser, Content: []Content{TextBlock{Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// system should be plain: [{text: ...}] with no cachePoint
+	if len(req.System) != 1 {
+		t.Fatalf("system len = %d, want 1 (text only)", len(req.System))
+	}
+	if _, ok := req.System[0]["cachePoint"]; ok {
+		t.Errorf("Nova system unexpectedly contains cachePoint")
+	}
+
+	// last user message should NOT end with a cachePoint block
+	if len(req.Messages) == 0 {
+		t.Fatal("no messages")
+	}
+	lastMsg := req.Messages[len(req.Messages)-1]
+	for _, block := range lastMsg.Content {
+		if _, ok := block["cachePoint"]; ok {
+			t.Errorf("Nova user message unexpectedly contains cachePoint: %v", block)
+		}
+	}
+}
+
+func TestBedrockBuildRequestCachingMultiTurn(t *testing.T) {
+	// In a multi-turn conversation the cachePoint should be on the LAST
+	// user message only, not on earlier ones.
+	client := &bedrockClient{region: "us-east-1"}
+	req, err := client.buildRequest(Request{
+		Model: "anthropic.claude-sonnet-4-5-20250929-v1:0",
+		Messages: []Message{
+			{Role: RoleUser, Content: []Content{TextBlock{Text: "turn 1"}}},
+			{Role: RoleAssistant, Content: []Content{TextBlock{Text: "response 1"}}},
+			{Role: RoleUser, Content: []Content{TextBlock{Text: "turn 2"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Find all user messages and verify only the last has a cachePoint.
+	var userMsgs []bedrockMessage
+	for _, m := range req.Messages {
+		if m.Role == "user" {
+			userMsgs = append(userMsgs, m)
+		}
+	}
+	if len(userMsgs) != 2 {
+		t.Fatalf("expected 2 user messages, got %d", len(userMsgs))
+	}
+
+	// First user message: no cachePoint
+	for _, block := range userMsgs[0].Content {
+		if _, ok := block["cachePoint"]; ok {
+			t.Errorf("first user message should not have cachePoint: %v", block)
+		}
+	}
+
+	// Last user message: ends with cachePoint
+	lastContent := userMsgs[len(userMsgs)-1].Content
+	lastBlock := lastContent[len(lastContent)-1]
+	if _, ok := lastBlock["cachePoint"]; !ok {
+		t.Errorf("last user message should end with cachePoint, got: %v", lastBlock)
+	}
+}
+
+func TestBedrockBuildRequestCachingNoSystemNoCrash(t *testing.T) {
+	// No system prompt: system array should be nil, not a bare cachePoint.
+	client := &bedrockClient{region: "us-east-1"}
+	req, err := client.buildRequest(Request{
+		Model:    "anthropic.claude-sonnet-4-5-20250929-v1:0",
+		Messages: []Message{{Role: RoleUser, Content: []Content{TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.System) != 0 {
+		t.Errorf("empty system prompt should produce nil system, got: %v", req.System)
+	}
+	// Message cachePoint still present
+	lastBlock := req.Messages[0].Content[len(req.Messages[0].Content)-1]
+	if _, ok := lastBlock["cachePoint"]; !ok {
+		t.Errorf("user message should still have cachePoint when system is empty")
+	}
+}
+
+func TestBedrockTagLastUserCache(t *testing.T) {
+	msgs := []bedrockMessage{
+		{Role: "user", Content: []map[string]interface{}{{"text": "hi"}}},
+		{Role: "assistant", Content: []map[string]interface{}{{"text": "hello"}}},
+		{Role: "user", Content: []map[string]interface{}{{"text": "followup"}}},
+	}
+	bedrockTagLastUserCache(msgs)
+
+	// Only the last user message (index 2) should have a cachePoint appended.
+	last := msgs[2].Content
+	if _, ok := last[len(last)-1]["cachePoint"]; !ok {
+		t.Errorf("last user message should end with cachePoint")
+	}
+	// The first user message should be untouched.
+	if len(msgs[0].Content) != 1 {
+		t.Errorf("first user message content len = %d, want 1", len(msgs[0].Content))
+	}
+	if _, ok := msgs[0].Content[0]["cachePoint"]; ok {
+		t.Errorf("first user message should not have cachePoint")
+	}
+}
+
+func TestBedrockTagLastUserCacheEmpty(t *testing.T) {
+	// Should not panic on empty or assistant-only history.
+	bedrockTagLastUserCache(nil)
+	bedrockTagLastUserCache([]bedrockMessage{})
+	msgs := []bedrockMessage{
+		{Role: "assistant", Content: []map[string]interface{}{{"text": "hi"}}},
+	}
+	bedrockTagLastUserCache(msgs) // should not panic, no user message to tag
+}
+
+func TestBedrockBuildRequestCachingWireJSON(t *testing.T) {
+	// Verify the JSON shape Bedrock actually receives has the right keys.
+	client := &bedrockClient{region: "us-east-1"}
+	breq, err := client.buildRequest(Request{
+		Model:  "anthropic.claude-sonnet-4-5-20250929-v1:0",
+		System: "be helpful",
+		Messages: []Message{
+			{Role: RoleUser, Content: []Content{TextBlock{Text: "hello"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(breq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `"cachePoint"`) {
+		t.Errorf("serialised request missing cachePoint key: %s", s)
+	}
+	if !strings.Contains(s, `"type":"default"`) {
+		t.Errorf("serialised request missing cachePoint type:default: %s", s)
+	}
+}
+
+// TestBedrockBuildRequestBtwToolHistory reproduces the /btw HTTP 400 bug:
+// the side-chat sends no tools but the frozen main transcript contains
+// toolUse / toolResult blocks. Bedrock rejects such a request unless
+// toolConfig is present. buildRequest must inject a stub toolConfig.
+func TestBedrockBuildRequestBtwToolHistory(t *testing.T) {
+	client := &bedrockClient{region: "us-east-1"}
+	req, err := client.buildRequest(Request{
+		Model: "amazon.nova-pro-v1:0",
+		// No tools — simulates /btw side-chat.
+		Messages: []Message{
+			// Frozen main transcript: one tool call + result already happened.
+			{Role: RoleAssistant, Content: []Content{
+				ToolCallBlock{ID: "tc-1", Name: "bash", Arguments: json.RawMessage(`{"command":"ls"}`)},
+			}},
+			{Role: RoleTool, Content: []Content{
+				ToolResultBlock{CallID: "tc-1", Content: []Content{TextBlock{Text: "file.go"}}},
+			}},
+			// Side-chat question appended by btwDialog.submit.
+			{Role: RoleUser, Content: []Content{TextBlock{Text: "what does that file do?"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ToolConfig == nil {
+		t.Fatal("buildRequest should inject a stub toolConfig when history has tool blocks and req.Tools is empty, but ToolConfig is nil")
+	}
+	if len(req.ToolConfig.Tools) == 0 {
+		t.Fatal("stub toolConfig should have at least one tool")
+	}
+	// The stub must have a valid name and a non-nil schema so Bedrock won't
+	// reject it for a different reason.
+	stub := req.ToolConfig.Tools[0]
+	if stub.ToolSpec.Name == "" {
+		t.Error("stub tool name must not be empty")
+	}
+	if stub.ToolSpec.InputSchema.JSON == nil {
+		t.Error("stub tool schema must not be nil")
+	}
+	// Serialised wire payload must include toolConfig.
+	b, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"toolConfig"`) {
+		t.Errorf("serialised request missing toolConfig: %s", b)
+	}
+}
+
+// TestBedrockBuildRequestNoToolHistoryNoStub ensures that when there are
+// no tool blocks in the history and no tools in the request (ordinary
+// conversational call), we do NOT inject a toolConfig at all — the extra
+// field is unnecessary and some models may behave differently with it.
+func TestBedrockBuildRequestNoToolHistoryNoStub(t *testing.T) {
+	client := &bedrockClient{region: "us-east-1"}
+	req, err := client.buildRequest(Request{
+		Model: "amazon.nova-pro-v1:0",
+		Messages: []Message{
+			{Role: RoleUser, Content: []Content{TextBlock{Text: "hello"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ToolConfig != nil {
+		t.Errorf("expected nil ToolConfig for plain conversation, got: %+v", req.ToolConfig)
+	}
+}
+
 func TestBedrockBuildRequestSkipsEmptyToolMessages(t *testing.T) {
 	client := &bedrockClient{}
 	req, err := client.buildRequest(Request{Messages: []Message{
