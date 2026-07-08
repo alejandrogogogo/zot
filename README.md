@@ -141,7 +141,7 @@ zot --help
 | `--base-url <url>` | Override the provider base URL (tests, self-hosted). |
 | `--system-prompt <text>` | Replace the default system prompt for this run (also overrides `$ZOT_HOME/SYSTEM.md`). |
 | `--append-system-prompt <text>` | Append text to the system prompt (repeatable). |
-| `--reasoning off\|minimum\|low\|medium\|high\|maximum` | Set thinking level on supported models. |
+| `--reasoning off\|minimum\|low\|medium\|high\|maximum` | Set thinking level on supported models (default: off). |
 | `-c`, `--continue` | Resume the latest session for this cwd. |
 | `-r`, `--resume` | Pick a session to resume. |
 | `--session <path>` | Resume a specific session file. |
@@ -294,7 +294,7 @@ Opens a dialog with every persistent setting. `up`/`down` to navigate, `enter` o
 
 - **render images when supported** — draw screenshots / `read`-returned images inline using the terminal's image protocol, or fall back to a text placeholder. Auto-detected from `TERM_PROGRAM`; the toggle overrides the detection. The row is greyed out and forced off on terminals that don't speak any image protocol.
 - **auto-swarm** — let the main agent spawn background sub-agents in parallel via a built-in `swarm_spawn` tool. Off by default. When on, the tool is registered with the running agent, the system prompt gains a short addendum telling the model to delegate independent sub-tasks proactively, and zot watches every sub-agent the main agent spawns. As soon as the last sub-agent in a batch finishes its initial task, an `[auto-swarm update]` message is injected back into the chat with each agent's status / task / transcript tail, so the main agent can summarise the collective outcome. Flipping off mid-session removes the tool from the live agent and strips the addendum on the next turn — the model stops trying to delegate. See `/swarm` for the dashboard that lets you monitor, message, kill, or remove the spawned agents.
-- **thinking level** — choose reasoning for supported models: off (no reasoning), minimum (~1k tokens), low (~2k), medium (~8k), high (~16k), maximum (~32k). The change is persisted to `config.json` and applied to the running agent's next model call.
+- **thinking level** — choose reasoning for supported models: off (default; no reasoning), minimum (~1k tokens), low (~2k), medium (~8k), high (~16k), maximum (~32k). The change is persisted to `config.json` and applied to the running agent's next model call.
 
 ### `/skills`
 
