@@ -348,7 +348,10 @@ func (d *btwDialog) Render(th tui.Theme, width int) []string {
 
 	out = append(out, "")
 	if d.editor != nil {
-		edLines, _, _ := d.editor.Render(width)
+		// Render at width-2 to match the two-cell left indent applied
+		// below. CursorPos uses the same width so the reported cursor
+		// column matches the wrapped layout shown on screen.
+		edLines, _, _ := d.editor.Render(width - 2)
 		for _, l := range edLines {
 			// Indent the editor body so it lines up with the side-chat
 			// content column. Editor's prompt already includes a left
@@ -371,9 +374,13 @@ func (d *btwDialog) CursorPos(width int) (row, col int) {
 	if !d.active || d.editor == nil {
 		return -1, -1
 	}
-	// Reproduce render's structure to find where the editor sits:
-	// header (1) + (turns_section_lines) + (loading?) + blank (1) + editor
+	// Reproduce render's structure to find where the editor sits.
+	// Note: the parent (interactive.go) wraps every dialog with
+	// padDialogFrame, which injects a blank row right after the
+	// frame header. We have to count that injected row here too;
+	// otherwise the reported cursor lands one row above the editor.
 	editorOffset := 1 // header
+	editorOffset++    // padDialogFrame's post-header blank
 	if len(d.turns) == 0 && !d.loading {
 		editorOffset++ // muted "ask anything..." line
 	}
