@@ -172,7 +172,9 @@ func clampViewTop(viewTop, cursor, window, total int) int {
 
 // formatSessionRowPlain returns the session row body without any ANSI
 // styling so the caller can wrap it in either a plain mute color or a
-// full-row selection highlight.
+// full-row selection highlight. The returned string is guaranteed to
+// fit within maxWidth visible characters so the terminal never soft-
+// wraps it into the next row.
 func formatSessionRowPlain(s core.SessionSummary, maxWidth int) string {
 	when := formatRelative(s.Started)
 	summary := strings.TrimSpace(s.Title)
@@ -182,17 +184,24 @@ func formatSessionRowPlain(s core.SessionSummary, maxWidth int) string {
 	if summary == "" {
 		summary = "(empty)"
 	}
+	summary = strings.ReplaceAll(summary, "\n", " ")
 	left := fmt.Sprintf("%-14s  %s/%s  %d msgs  $%.4f  ",
 		when, s.Provider, s.Model, s.MessageCount, s.TotalCost)
-	room := maxWidth - len(left)
-	if room < 10 {
-		room = 10
+	room := maxWidth - len([]rune(left))
+	if room < 4 {
+		room = 4
 	}
-	if len(summary) > room {
-		summary = summary[:room-1] + "…"
+	runes := []rune(summary)
+	if len(runes) > room {
+		summary = string(runes[:room-1]) + "…"
 	}
-	summary = strings.ReplaceAll(summary, "\n", " ")
-	return left + summary
+	row := left + summary
+	// Hard clamp: ensure the full row never exceeds maxWidth.
+	rowRunes := []rune(row)
+	if len(rowRunes) > maxWidth {
+		row = string(rowRunes[:maxWidth-1]) + "…"
+	}
+	return row
 }
 
 func formatRelative(t time.Time) string {
