@@ -283,6 +283,7 @@ type Interactive struct {
 	// streamed + still pending) at the moment the tool starts, and
 	// hold the block back until the pacer reaches it.
 	toolGate         map[string]int
+	liveToolRowsMax  int
 	statusErr        string
 	statusOK         string
 	liveBlock        []string // live streaming/tool progress rendered outside scrollback
@@ -855,6 +856,10 @@ func (i *Interactive) buildChatLocked(cols int) []string {
 	// the final assistant text — which looks like the summary came
 	// "before" the tools.
 	i.view.ToolCalls = i.view.ToolCalls[:0]
+	if !i.busy {
+		i.liveToolRowsMax = 0
+	}
+	i.view.LiveToolMinRows = i.liveToolRowsMax
 	if i.busy {
 		for _, id := range i.toolOrder {
 			// Deterministic ordering: a tool block stays hidden until
@@ -878,6 +883,9 @@ func (i *Interactive) buildChatLocked(cols int) []string {
 	// whole bottom band shrinking and shifting chat lines around.
 	i.liveBlock = nil
 	chat := i.view.Build(cols)
+	if i.view.LastLiveToolRows > i.liveToolRowsMax {
+		i.liveToolRowsMax = i.view.LastLiveToolRows
+	}
 
 	// Welcome banner: shown at the top of the chat area when there is
 	// no transcript yet. Disappears after the first message is sent.
@@ -4389,6 +4397,7 @@ func (i *Interactive) startTurnWithImages(parent context.Context, prompt string,
 	i.toolCalls = map[string]*tui.ToolCallView{}
 	i.toolOrder = nil
 	i.toolGate = map[string]int{}
+	i.liveToolRowsMax = 0
 	i.shellBlock = nil // sending a prompt clears any parked shell-escape log
 	i.extNotes = nil   // ext notes are one-shot; a new prompt clears them
 	i.scrollOffset = 0 // jump back to the bottom on new turn
@@ -4657,6 +4666,7 @@ func (i *Interactive) handleEvent(ev core.AgentEvent) {
 		i.toolCalls = map[string]*tui.ToolCallView{}
 		i.toolOrder = nil
 		i.toolGate = map[string]int{}
+		i.liveToolRowsMax = 0
 	case core.EvTextDelta:
 		// Buffer into streamPending; the paintPace ticker drains
 		// it into i.streaming a few runes at a time for a smooth
