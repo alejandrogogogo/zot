@@ -490,7 +490,11 @@ func (d *loginDialog) CursorPos(width int) (row, col int) {
 		wrapW = 20
 	}
 	urlLines := len(tui.WrapANSILine(d.url, wrapW))
-	baseOffset := 1 /*frameHeader*/ + 1 /*hint*/ + urlLines + 1 /*blank*/ + 1 /*prompt*/
+	// interactive.redraw wraps dialog output with padDialogFrame, which
+	// injects a blank row after the frame header. Count that row here so
+	// the real terminal cursor lands on the editor input instead of the
+	// prompt above it.
+	baseOffset := 1 /*frameHeader*/ + 1 /*padDialogFrame blank*/ + 1 /*hint*/ + urlLines + 1 /*blank*/ + 1 /*prompt*/
 	return baseOffset + eRow, eCol
 }
 
