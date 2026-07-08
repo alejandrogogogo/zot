@@ -27,9 +27,8 @@ import (
 // every one of them.
 // ----------------------------------------------------------------------
 
-// NewOpenAICompat is the shared constructor for OpenAI-completions clones.
-// Exported so build.go can instantiate clients for user-defined providers.
-func NewOpenAICompat(name, apiKey, baseURL, fallbackBaseURL string) Client {
+// newOpenAICompat is the shared constructor for OpenAI-completions clones.
+func newOpenAICompat(name, apiKey, baseURL, fallbackBaseURL string) Client {
 	if baseURL == "" {
 		baseURL = fallbackBaseURL
 	}
@@ -44,48 +43,48 @@ func NewOpenAICompat(name, apiKey, baseURL, fallbackBaseURL string) Client {
 // NewMoonshot is the global Moonshot AI endpoint (Kimi-K2 family by id).
 // Provider id is `moonshotai`.
 func NewMoonshot(apiKey, baseURL string) Client {
-	return NewOpenAICompat("moonshotai", apiKey, baseURL, "https://api.moonshot.ai/v1")
+	return newOpenAICompat("moonshotai", apiKey, baseURL, "https://api.moonshot.ai/v1")
 }
 
 // NewMoonshotCN is the China-region Moonshot endpoint. Same model ids as
 // the global flavor, different base URL.
 func NewMoonshotCN(apiKey, baseURL string) Client {
-	return NewOpenAICompat("moonshotai-cn", apiKey, baseURL, "https://api.moonshot.cn/v1")
+	return newOpenAICompat("moonshotai-cn", apiKey, baseURL, "https://api.moonshot.cn/v1")
 }
 
 // NewCerebras: ultra-fast inference (Llama/Qwen/GPT-OSS/GLM).
 func NewCerebras(apiKey, baseURL string) Client {
-	return NewOpenAICompat("cerebras", apiKey, baseURL, "https://api.cerebras.ai/v1")
+	return newOpenAICompat("cerebras", apiKey, baseURL, "https://api.cerebras.ai/v1")
 }
 
 // NewGroq: LPU inference (Llama/Kimi/Qwen/GPT-OSS).
 func NewGroq(apiKey, baseURL string) Client {
-	return NewOpenAICompat("groq", apiKey, baseURL, "https://api.groq.com/openai/v1")
+	return newOpenAICompat("groq", apiKey, baseURL, "https://api.groq.com/openai/v1")
 }
 
 // NewXAI: xAI Grok.
 func NewXAI(apiKey, baseURL string) Client {
-	return NewOpenAICompat("xai", apiKey, baseURL, "https://api.x.ai/v1")
+	return newOpenAICompat("xai", apiKey, baseURL, "https://api.x.ai/v1")
 }
 
 // NewTogether: Together.ai aggregator.
 func NewTogether(apiKey, baseURL string) Client {
-	return NewOpenAICompat("together", apiKey, baseURL, "https://api.together.ai/v1")
+	return newOpenAICompat("together", apiKey, baseURL, "https://api.together.ai/v1")
 }
 
 // NewHuggingFace: HF inference router.
 func NewHuggingFace(apiKey, baseURL string) Client {
-	return NewOpenAICompat("huggingface", apiKey, baseURL, "https://router.huggingface.co/v1")
+	return newOpenAICompat("huggingface", apiKey, baseURL, "https://router.huggingface.co/v1")
 }
 
 // NewZAI: Z.AI GLM family.
 func NewZAI(apiKey, baseURL string) Client {
-	return NewOpenAICompat("zai", apiKey, baseURL, "https://api.z.ai/api/coding/paas/v4")
+	return newOpenAICompat("zai", apiKey, baseURL, "https://api.z.ai/api/coding/paas/v4")
 }
 
 // NewXiaomi: Xiaomi MiMo family (default endpoint).
 func NewXiaomi(apiKey, baseURL string) Client {
-	return NewOpenAICompat("xiaomi", apiKey, baseURL, "https://api.xiaomimimo.com/v1")
+	return newOpenAICompat("xiaomi", apiKey, baseURL, "https://api.xiaomimimo.com/v1")
 }
 
 // NewXiaomiTokenPlan creates a regional Xiaomi token-plan client.
@@ -107,13 +106,13 @@ func NewXiaomiTokenPlan(region, apiKey, baseURL string) Client {
 	default:
 		panic(fmt.Sprintf("xiaomi token-plan: unknown region %q", region))
 	}
-	return NewOpenAICompat(name, apiKey, baseURL, fallback)
+	return newOpenAICompat(name, apiKey, baseURL, fallback)
 }
 
 // NewOpenRouter: OpenRouter aggregator. Unlocks dozens of upstream
 // models with one key.
 func NewOpenRouter(apiKey, baseURL string) Client {
-	return NewOpenAICompat("openrouter", apiKey, baseURL, openrouterDefaultBaseURL)
+	return newOpenAICompat("openrouter", apiKey, baseURL, openrouterDefaultBaseURL)
 }
 
 // NewOpenCode is the opencode.ai Zen endpoint. Mixed APIs upstream; this
@@ -121,37 +120,37 @@ func NewOpenRouter(apiKey, baseURL string) Client {
 // the anthropic-messages flavor under the same provider should be built
 // with NewAnthropicCompat against the same base URL.
 func NewOpenCode(apiKey, baseURL string) Client {
-	return NewOpenAICompat("opencode", apiKey, baseURL, "https://opencode.ai/zen/v1")
+	return newOpenAICompat("opencode", apiKey, baseURL, "https://opencode.ai/zen/v1")
 }
 
 // NewOpenCodeGo is the opencode-go variant.
 func NewOpenCodeGo(apiKey, baseURL string) Client {
-	return NewOpenAICompat("opencode-go", apiKey, baseURL, "https://opencode.ai/zen/go/v1")
+	return newOpenAICompat("opencode-go", apiKey, baseURL, "https://opencode.ai/zen/go/v1")
 }
 
 // NewMinimaxOpenAI is the OpenAI-completions flavor of MiniMax, in case
 // downstream models switch from anthropic-messages. The main MiniMax route
 // uses anthropic-messages; see NewMinimaxAnthropic below.
 func NewMinimaxOpenAI(apiKey, baseURL string) Client {
-	return NewOpenAICompat("minimax", apiKey, baseURL, "https://api.minimax.io/v1")
+	return newOpenAICompat("minimax", apiKey, baseURL, "https://api.minimax.io/v1")
 }
 
 // NewMinimaxCNOpenAI is the CN-region MiniMax (openai-completions).
 func NewMinimaxCNOpenAI(apiKey, baseURL string) Client {
-	return NewOpenAICompat("minimax-cn", apiKey, baseURL, "https://api.minimaxi.com/v1")
+	return newOpenAICompat("minimax-cn", apiKey, baseURL, "https://api.minimaxi.com/v1")
 }
 
 // NewFireworksOpenAI is the OpenAI-completions flavor of Fireworks.
 // The main route uses the anthropic-messages variant on
 // api.fireworks.ai/inference; see NewFireworksAnthropic.
 func NewFireworksOpenAI(apiKey, baseURL string) Client {
-	return NewOpenAICompat("fireworks", apiKey, baseURL, "https://api.fireworks.ai/inference/v1")
+	return newOpenAICompat("fireworks", apiKey, baseURL, "https://api.fireworks.ai/inference/v1")
 }
 
 // NewVercelGatewayOpenAI is Vercel AI Gateway's OpenAI-compat shim. The
 // main route uses anthropic-messages; see NewVercelGatewayAnthropic.
 func NewVercelGatewayOpenAI(apiKey, baseURL string) Client {
-	return NewOpenAICompat("vercel-ai-gateway", apiKey, baseURL, "https://ai-gateway.vercel.sh/v1")
+	return newOpenAICompat("vercel-ai-gateway", apiKey, baseURL, "https://ai-gateway.vercel.sh/v1")
 }
 
 // ----------------------------------------------------------------------
@@ -269,7 +268,7 @@ func NewAzureOpenAIResponses(apiKey, baseURL string) Client {
 // the same models with tool calling and streaming, so we use that for
 // simplicity (no extra wire format to maintain).
 func NewMistral(apiKey, baseURL string) Client {
-	return NewOpenAICompat("mistral", apiKey, baseURL, "https://api.mistral.ai/v1")
+	return newOpenAICompat("mistral", apiKey, baseURL, "https://api.mistral.ai/v1")
 }
 
 // Cloudflare endpoints carry `{CLOUDFLARE_ACCOUNT_ID}` and (for the AI
@@ -307,7 +306,7 @@ func NewCloudflareWorkersAI(apiKey, baseURL string) Client {
 	if err != nil {
 		return &unimplementedClient{name: "cloudflare-workers-ai", hint: err.Error()}
 	}
-	return NewOpenAICompat("cloudflare-workers-ai", apiKey, resolved, "")
+	return newOpenAICompat("cloudflare-workers-ai", apiKey, resolved, "")
 }
 
 // NewCloudflareAIGateway returns the AI Gateway client (OpenAI compat

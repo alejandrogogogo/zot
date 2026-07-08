@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strconv"
 	"strings"
 	"time"
 )
@@ -13,7 +12,6 @@ type Key struct {
 	Paste string // for KeyPaste
 	Ctrl  bool
 	Alt   bool
-	Shift bool
 }
 
 type KeyKind int
@@ -242,26 +240,27 @@ func (r *Reader) dispatchCSI(params string, final byte) Key {
 		return Key{Kind: KeyUnknown}
 	}
 
-	shift, alt := parseCSIModifiers(params)
-	if final == 'u' {
-		if key, ok := parseCSIU(params); ok {
-			return key
-		}
-	}
-	if final == '~' {
-		if key, ok := parseModifyOtherKeys(params); ok {
-			return key
+	// Modified arrow keys come in as CSI 1;<mod><final>. Modifier values
+	// we care about: 2=Shift, 3=Alt/Option, 5=Ctrl. We only extract Alt.
+	var alt bool
+	if params != "" {
+		if i := strings.IndexByte(params, ';'); i >= 0 {
+			mod := params[i+1:]
+			if mod == "3" || mod == "4" || mod == "7" || mod == "8" {
+				// 3=Alt, 4=Shift+Alt, 7=Ctrl+Alt, 8=Ctrl+Shift+Alt
+				alt = true
+			}
 		}
 	}
 	switch final {
 	case 'A':
-		return Key{Kind: KeyUp, Alt: alt, Shift: shift}
+		return Key{Kind: KeyUp, Alt: alt}
 	case 'B':
-		return Key{Kind: KeyDown, Alt: alt, Shift: shift}
+		return Key{Kind: KeyDown, Alt: alt}
 	case 'C':
-		return Key{Kind: KeyRight, Alt: alt, Shift: shift}
+		return Key{Kind: KeyRight, Alt: alt}
 	case 'D':
-		return Key{Kind: KeyLeft, Alt: alt, Shift: shift}
+		return Key{Kind: KeyLeft, Alt: alt}
 	case 'H':
 		return Key{Kind: KeyHome}
 	case 'F':
@@ -282,106 +281,6 @@ func (r *Reader) dispatchCSI(params string, final byte) Key {
 		}
 	}
 	return Key{Kind: KeyUnknown}
-}
-
-func parseCSIModifiers(params string) (shift, alt bool) {
-	if params == "" {
-		return false, false
-	}
-	i := strings.LastIndexByte(params, ';')
-	if i < 0 || i+1 >= len(params) {
-		return false, false
-	}
-	mod, err := strconv.Atoi(params[i+1:])
-	if err != nil {
-		return false, false
-	}
-	// Xterm-style modifier values are 1 plus a bitmask:
-	// 2=Shift, 3=Alt, 4=Shift+Alt, 5=Ctrl, 6=Shift+Ctrl,
-	// 7=Alt+Ctrl, 8=Shift+Alt+Ctrl.
-	bits := mod - 1
-	return bits&1 != 0, bits&2 != 0
-}
-
-func parseCSIU(params string) (Key, bool) {
-	parts := strings.Split(params, ";")
-	if len(parts) == 0 {
-		return Key{}, false
-	}
-	code, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return Key{}, false
-	}
-	mod := 1
-	if len(parts) >= 2 {
-		if mod, err = strconv.Atoi(parts[1]); err != nil {
-			return Key{}, false
-		}
-	}
-	return keyFromModifiedCode(code, mod)
-}
-
-func parseModifyOtherKeys(params string) (Key, bool) {
-	parts := strings.Split(params, ";")
-	if len(parts) != 3 || parts[0] != "27" {
-		return Key{}, false
-	}
-	mod, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return Key{}, false
-	}
-	code, err := strconv.Atoi(parts[2])
-	if err != nil {
-		return Key{}, false
-	}
-	return keyFromModifiedCode(code, mod)
-}
-
-func keyFromModifiedCode(code, mod int) (Key, bool) {
-	bits := mod - 1
-	shift := bits&1 != 0
-	alt := bits&2 != 0
-	ctrl := bits&4 != 0
-	// Kitty keyboard protocol (CSI ... u) reports control keys as their
-	// codepoints: Esc=27, Enter=13, Tab=9, Backspace=127. Without the
-	// enhanced-mode handling these arrive as raw bytes; with it enabled
-	// they come through here, so map them back to their dedicated keys.
-	switch code {
-	case 13:
-		return Key{Kind: KeyEnter, Shift: shift, Alt: alt, Ctrl: ctrl}, true
-	case 27:
-		return Key{Kind: KeyEsc, Shift: shift, Alt: alt, Ctrl: ctrl}, true
-	case 9:
-		if shift {
-			return Key{Kind: KeyShiftTab, Alt: alt, Ctrl: ctrl}, true
-		}
-		return Key{Kind: KeyTab, Shift: shift, Alt: alt, Ctrl: ctrl}, true
-	case 127, 8:
-		return Key{Kind: KeyBackspace, Shift: shift, Alt: alt, Ctrl: ctrl}, true
-	}
-	if ctrl {
-		switch code {
-		case 'c', 'C':
-			return Key{Kind: KeyCtrlC, Shift: shift, Alt: alt, Ctrl: true}, true
-		case 'd', 'D':
-			return Key{Kind: KeyCtrlD, Shift: shift, Alt: alt, Ctrl: true}, true
-		case 'l', 'L':
-			return Key{Kind: KeyCtrlL, Shift: shift, Alt: alt, Ctrl: true}, true
-		case 'u', 'U':
-			return Key{Kind: KeyCtrlU, Shift: shift, Alt: alt, Ctrl: true}, true
-		case 'k', 'K':
-			return Key{Kind: KeyCtrlK, Shift: shift, Alt: alt, Ctrl: true}, true
-		case 'a', 'A':
-			return Key{Kind: KeyCtrlA, Shift: shift, Alt: alt, Ctrl: true}, true
-		case 'e', 'E':
-			return Key{Kind: KeyCtrlE, Shift: shift, Alt: alt, Ctrl: true}, true
-		case 'w', 'W':
-			return Key{Kind: KeyCtrlW, Shift: shift, Alt: alt, Ctrl: true}, true
-		case 'o', 'O':
-			return Key{Kind: KeyCtrlO, Shift: shift, Alt: alt, Ctrl: true}, true
-		}
-	}
-	return Key{}, false
 }
 
 // readPaste reads until ESC [ 2 0 1 ~ and returns the pasted text.

@@ -3,7 +3,6 @@ package agent
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/patriceckhart/zot/packages/tui"
@@ -38,7 +37,6 @@ type Args struct {
 	SystemPrompt       string
 	AppendSystemPrompt []string
 	Reasoning          string
-	Temperature        *float32
 
 	Continue bool
 	Resume   bool
@@ -73,9 +71,6 @@ type Args struct {
 	// .agents/skills/. It defaults to true; --no-skill disables all
 	// skill discovery, including built-ins.
 	WithSkills bool
-
-	// InsecureTLS skips TLS verification for custom inference endpoints.
-	InsecureTLS bool
 
 	// NoYolo turns on per-tool confirmation. Before each tool
 	// invocation the TUI prompts the user with the tool name + args
@@ -193,8 +188,6 @@ func ParseArgs(in []string) (Args, error) {
 		case "--with-skills", "--with-skill":
 			// Deprecated no-op: user skills are loaded by default.
 			a.WithSkills = true
-		case "--insecure":
-			a.InsecureTLS = true
 		case "--no-yolo":
 			a.NoYolo = true
 		case "--reasoning":
@@ -208,17 +201,6 @@ func ParseArgs(in []string) (Args, error) {
 			default:
 				return a, fmt.Errorf("--reasoning must be off|minimum|low|medium|high|maximum")
 			}
-		case "--temperature":
-			v, err := want(&i, arg)
-			if err != nil {
-				return a, err
-			}
-			f, err := strconv.ParseFloat(v, 32)
-			if err != nil || f < 0 || f > 2 {
-				return a, fmt.Errorf("--temperature must be a number between 0 and 2")
-			}
-			t := float32(f)
-			a.Temperature = &t
 		case "--session":
 			v, err := want(&i, arg)
 			if err != nil {
@@ -378,9 +360,7 @@ func PrintHelp(version string) {
 		row{"--model ID", "model id (see --list-models)"},
 		row{"--api-key KEY", "api key for this run (env / auth.json fallback)"},
 		row{"--base-url URL", "override provider api base url"},
-		row{"--insecure", "skip TLS certificate verification (for self-signed-cert endpoints)"},
 		row{"--reasoning off|minimum|low|medium|high|maximum", "set thinking level on supported models"},
-		row{"--temperature N", "sampling temperature, 0 to 2 (omit for provider default)"},
 	)
 	section("prompt and session flags",
 		row{"--system-prompt TEXT", "replace the default system prompt"},
