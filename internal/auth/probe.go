@@ -37,6 +37,15 @@ func ProbeAPIKey(ctx context.Context, provider, key string) error {
 			return err
 		}
 		req.Header.Set("authorization", "Bearer "+key)
+	case "google":
+		// Google Generative Language: list models with the API key.
+		// Accepts the key via x-goog-api-key header (preferred over
+		// the ?key= query param so it doesn't show up in proxy logs).
+		req, err = http.NewRequestWithContext(ctx, "GET", "https://generativelanguage.googleapis.com/v1beta/models", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("x-goog-api-key", key)
 	default:
 		return fmt.Errorf("unknown provider %q", provider)
 	}

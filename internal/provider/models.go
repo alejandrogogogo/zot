@@ -171,6 +171,33 @@ var Catalog = []Model{
 		PriceInput: 15.00, PriceOutput: 60.00, PriceCacheRead: 7.50,
 	},
 
+	// ---- Google / Gemini ----
+	{
+		Provider: "google", ID: "gemini-2.5-pro", DisplayName: "Gemini 2.5 Pro",
+		ContextWindow: 1_048_576, MaxOutput: 65536, Reasoning: true,
+		PriceInput: 1.25, PriceOutput: 10.00, PriceCacheRead: 0.31, PriceCacheWrite: 0,
+	},
+	{
+		Provider: "google", ID: "gemini-2.5-flash", DisplayName: "Gemini 2.5 Flash",
+		ContextWindow: 1_048_576, MaxOutput: 65536, Reasoning: true,
+		PriceInput: 0.30, PriceOutput: 2.50, PriceCacheRead: 0.075, PriceCacheWrite: 0,
+	},
+	{
+		Provider: "google", ID: "gemini-2.5-flash-lite", DisplayName: "Gemini 2.5 Flash-Lite",
+		ContextWindow: 1_048_576, MaxOutput: 65536, Reasoning: true,
+		PriceInput: 0.10, PriceOutput: 0.40, PriceCacheRead: 0.025, PriceCacheWrite: 0,
+	},
+	{
+		Provider: "google", ID: "gemini-2.0-flash", DisplayName: "Gemini 2.0 Flash",
+		ContextWindow: 1_048_576, MaxOutput: 8192, Reasoning: false,
+		PriceInput: 0.10, PriceOutput: 0.40, PriceCacheRead: 0.025, PriceCacheWrite: 0,
+	},
+	{
+		Provider: "google", ID: "gemini-2.0-flash-lite", DisplayName: "Gemini 2.0 Flash-Lite",
+		ContextWindow: 1_048_576, MaxOutput: 8192, Reasoning: false,
+		PriceInput: 0.075, PriceOutput: 0.30, PriceCacheRead: 0, PriceCacheWrite: 0,
+	},
+
 	// ---- Speculative: Anthropic ----
 	{
 		Provider: "anthropic", ID: "claude-opus-4-5", DisplayName: "Claude Opus 4.5",

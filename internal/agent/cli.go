@@ -721,7 +721,7 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 		BuildAgentForRescue:        buildAgentForRescue,
 		LoggedInProviders: func() []string {
 			var out []string
-			for _, p := range []string{"anthropic", "openai", "kimi"} {
+			for _, p := range []string{"anthropic", "openai", "kimi", "google"} {
 				if _, _, err := ResolveCredential(p, ""); err == nil {
 					out = append(out, p)
 				}

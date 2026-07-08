@@ -5,7 +5,7 @@
 Yet another coding agent harness, lightweight and written (vibe-slopped) in go.
 
 - one static binary.
-- built-in providers for anthropic, openai/codex, kimi, and ollama/openai-compatible local models.
+- built-in providers for anthropic, openai/codex, kimi, google gemini, and ollama/openai-compatible local models.
 - four tools (read, write, edit, bash).
 - three run modes (interactive tui, print, json).
 - built-in telegram bot.
@@ -61,7 +61,7 @@ The easiest way is to just run `zot` and type `/login`. The TUI opens even witho
 ### Credential lookup order
 
 1. `--api-key` flag
-2. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`, or `MOONSHOT_API_KEY` env var
+2. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`, `MOONSHOT_API_KEY`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY` env var
 3. `$ZOT_HOME/auth.json` (API key or OAuth token; mode 0600)
 
 `$ZOT_HOME` defaults to:
@@ -73,8 +73,8 @@ The easiest way is to just run `zot` and type `/login`. The TUI opens even witho
 
 Run `zot` and type `/login`. Pick one of two methods:
 
-- **API key**: a small local web server starts on `127.0.0.1:<free-port>`, your browser opens a form, you paste your `sk-ant-...`, `sk-...`, or Kimi/Moonshot key. zot probes the provider once and saves it to `auth.json` if accepted.
-- **Subscription**: use your Claude Pro/Max, ChatGPT Plus/Pro, or Kimi Code subscription.
+- **API key**: a small local web server starts on `127.0.0.1:<free-port>`, your browser opens a form, you paste your `sk-ant-...`, `sk-...`, Kimi/Moonshot key, or Google AI Studio (`AIza...`) Gemini key. zot probes the provider once and saves it to `auth.json` if accepted.
+- **Subscription**: use your Claude Pro/Max, ChatGPT Plus/Pro, or Kimi Code subscription. Google Gemini does **not** have a subscription login path: a paid Gemini Advanced / Google One AI Premium plan only unlocks the consumer Gemini app and does not raise quotas on the AI Studio API. Use the API-key flow for Google.
   - Anthropic and OpenAI pin the browser callback to fixed provider-specific ports (`localhost:53692` for Anthropic, `localhost:1455` for OpenAI) because those are the only ports their auth servers will redirect to.
   - Anthropic uses the Claude Code OAuth flow. Messages go to `api.anthropic.com` with a bearer token and the Claude Code identity headers.
   - OpenAI uses the Codex CLI OAuth flow. Messages go to `chatgpt.com/backend-api/codex/responses` with the `chatgpt-account-id` extracted from the returned id_token.
@@ -127,7 +127,7 @@ zot --help
 
 | Flag | Description |
 |---|---|
-| `--provider anthropic\|openai\|kimi\|ollama` | Pick the provider. |
+| `--provider anthropic\|openai\|kimi\|google\|ollama` | Pick the provider. |
 | `--model <id>` | Pick the model (see `--list-models`). |
 | `--api-key <key>` | Override the API key. |
 | `--base-url <url>` | Override the provider base URL (tests, self-hosted). |
@@ -181,7 +181,7 @@ Type `/` in the TUI to open the autocomplete popup. Available commands:
 |---|---|
 | `/help` | Show key bindings and commands. |
 | `/login` | Log in via API key or subscription (opens a dialog). |
-| `/logout [provider]` | Clear credentials for `anthropic`, `openai`, `kimi`, or all when omitted. `/logout kimi` also disables fallback to the official Kimi Code CLI token until you log in to Kimi through zot again. |
+| `/logout [provider]` | Clear credentials for `anthropic`, `openai`, `kimi`, `google`, or all when omitted. `/logout kimi` also disables fallback to the official Kimi Code CLI token until you log in to Kimi through zot again. |
 | `/model` | Pick a model from a list (or `/model <id>` to set directly). |
 | `/sessions` | Resume a previous session for this directory. |
 | `/session` | Four ops on the current session: `export` to a portable `.zotsession` file, `import` one back in, `fork` from a past user message into a new branch, `tree` to switch between branches. Opens a picker without an argument; direct forms: `/session export [path]`, `/session import <path>`, `/session fork`, `/session tree`. Default export destination is `~/Downloads`. |
@@ -268,7 +268,7 @@ When a turn fails because of a recoverable provider error — expired token (`40
 
 The picker is the same vertical list / fuzzy filter UI as `/model`, but it only shows models from providers you're currently logged in to (env vars, `auth.json`, Kimi CLI fallback, ollama). The failed model is excluded. Press `↑`/`↓` to choose, `enter` to retry the **same prompt** on the new model, `esc` to dismiss.
 
-Before the actual provider request fires, the OpenAI / Anthropic / Kimi / OpenAI-Codex clients also do up to two silent retries with short backoff (250ms, 750ms) on `502`/`503`/`504` and connection-reset / EOF-before-headers errors. Most edge-proxy blips disappear without you ever seeing the rescue picker.
+Before the actual provider request fires, the OpenAI / Anthropic / Kimi / Google / OpenAI-Codex clients also do up to two silent retries with short backoff (250ms, 750ms) on `502`/`503`/`504` and connection-reset / EOF-before-headers errors. Most edge-proxy blips disappear without you ever seeing the rescue picker.
 
 A rescue retry always **drops launch-time `--api-key` and `--base-url`** before rebuilding the agent. Those overrides are usually the reason the rescue triggered (bad key, typo'd base URL, corporate gateway only valid for the originally-picked provider), so the retry re-resolves credentials from env vars / `auth.json` / provider defaults instead. Use `/model` if you want overrides to stick.
 
@@ -332,6 +332,38 @@ zot --provider kimi --model kimi-k2-0905-preview --base-url https://api.moonshot
 ```
 
 You can add additional Kimi/Moonshot model IDs to `models.json` under the `kimi` provider.
+
+### Google Gemini
+
+zot has built-in Google Gemini support through the [AI Studio Generative Language API](https://aistudio.google.com/).
+
+```bash
+zot --provider google
+```
+
+By default this uses:
+
+- model: `gemini-2.5-pro`
+- base URL: `https://generativelanguage.googleapis.com`
+
+Catalog ships with `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash`, and `gemini-2.0-flash-lite`. Live discovery against `/v1beta/models` adds anything else your key can see.
+
+Credential lookup order for Google:
+
+1. `--api-key`
+2. `GEMINI_API_KEY`
+3. `GOOGLE_API_KEY`
+4. `$ZOT_HOME/auth.json`
+
+Use `/login` and pick **api key** to paste an AI Studio key. zot probes `/v1beta/models` once and stores the key under `google` in `auth.json`.
+
+> **Auth model: API key only.** Google does not issue OAuth tokens for consumer Gemini Advanced / Google One AI Premium subscriptions, so there is no "log in with your Google subscription" flow. Programmatic access requires either an AI Studio API key (this provider) or a Vertex AI / GCP service-account credential (not yet wired up in zot). The `/login subscription` step quietly downgrades to the api-key form when you pick Google so you don't end up in a dead end.
+
+> **Free-tier rate limits.** AI Studio's free tier has tight per-minute and per-day caps that vary by model: `gemini-2.5-pro` is the strictest (a few requests per minute, ~50 per day), Flash and Flash-Lite are far more generous. If a Pro turn 429s with `"You exceeded your current quota"` while Flash on the same key still works, you've hit the Pro free-tier RPD. Either switch to Flash for agent loops, or [enable billing](https://aistudio.google.com/app/apikey) on your AI Studio project to flip the same key from free to pay-as-you-go pricing (`$1.25/M` input, `$10/M` output for Pro).
+
+Reasoning levels (`--reasoning low|medium|high`) map differently per generation: 2.5 family uses `thinkingBudget` token budgets per model (Pro caps at 32k, Flash at 24k); Gemini 3.x uses the `thinkingLevel` enum (`MINIMAL`/`LOW`/`MEDIUM`/`HIGH`), with Gemini-3-Pro pinned to `LOW` minimum and `HIGH` for any "medium" or "high" request. 2.0-family models have no thinking config at all.
+
+You can add additional Gemini model IDs to `models.json` under the `google` provider.
 
 ### Local models with ollama
 
