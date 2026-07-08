@@ -1,6 +1,6 @@
 // Tiny Go program that drives `zot rpc` as a subprocess.
 //
-// For an in-process Go embedding, use github.com/patriceckhart/zot/pkg/zotcore
+// For an in-process Go embedding, use github.com/patriceckhart/zot/packages/agent/sdk
 // instead — this example exists to show what consumers in OTHER
 // languages have to do.
 package main

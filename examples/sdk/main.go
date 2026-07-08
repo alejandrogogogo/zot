@@ -1,4 +1,4 @@
-// In-process Go embedding of the zot agent runtime via the zotcore SDK.
+// In-process Go embedding of the zot agent runtime via the sdk package.
 // Compare to examples/rpc/go which spawns `zot rpc` as a subprocess.
 package main
 
@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/patriceckhart/zot/pkg/zotcore"
+	"github.com/patriceckhart/zot/packages/agent/sdk"
 )
 
 func main() {
@@ -18,7 +18,7 @@ func main() {
 	}
 	prompt := strings.Join(os.Args[1:], " ")
 
-	rt, err := zotcore.New(zotcore.Config{})
+	rt, err := sdk.New(sdk.Config{})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

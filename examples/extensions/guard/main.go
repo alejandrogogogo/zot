@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/patriceckhart/zot/pkg/zotext"
+	"github.com/patriceckhart/zot/packages/agent/ext"
 )
 
 var dangerPatterns = []*regexp.Regexp{
@@ -42,7 +42,7 @@ var dangerPatterns = []*regexp.Regexp{
 }
 
 func main() {
-	ext := zotext.New("guard", "1.0.0")
+	e := ext.New("guard", "1.0.0")
 
 	auditPath := filepath.Join(os.TempDir(), "zot-guard-audit.log")
 	auditFile, _ := os.OpenFile(auditPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
@@ -54,19 +54,19 @@ func main() {
 		if auditFile != nil {
 			auditFile.WriteString(line)
 		}
-		ext.Logf("%s", strings.TrimRight(line, "\n"))
+		e.Logf("%s", strings.TrimRight(line, "\n"))
 	}
 
 	// Lifecycle observers.
-	ext.On("session_start", func(ev zotext.Event) { audit("[guard] session_start") })
-	ext.On("turn_start", func(ev zotext.Event) { audit("[guard] turn_start step=%d", ev.Step) })
-	ext.On("tool_call", func(ev zotext.Event) {
+	e.On("session_start", func(ev ext.Event) { audit("[guard] session_start") })
+	e.On("turn_start", func(ev ext.Event) { audit("[guard] turn_start step=%d", ev.Step) })
+	e.On("tool_call", func(ev ext.Event) {
 		audit("[guard] tool_call %s args=%s", ev.ToolName, string(ev.ToolArgs))
 	})
-	ext.On("turn_end", func(ev zotext.Event) { audit("[guard] turn_end stop=%s err=%s", ev.Stop, ev.Error) })
+	e.On("turn_end", func(ev ext.Event) { audit("[guard] turn_end stop=%s err=%s", ev.Stop, ev.Error) })
 
 	// Tool-call gate.
-	ext.InterceptToolCall(func(toolName string, args json.RawMessage) (bool, string) {
+	e.InterceptToolCall(func(toolName string, args json.RawMessage) (bool, string) {
 		if toolName != "bash" {
 			return true, "" // only guard bash
 		}
@@ -85,7 +85,7 @@ func main() {
 		return true, ""
 	})
 
-	if err := ext.Run(); err != nil {
-		ext.Logf("fatal: %v", err)
+	if err := e.Run(); err != nil {
+		e.Logf("fatal: %v", err)
 	}
 }

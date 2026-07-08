@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/patriceckhart/zot/pkg/zotext"
+	"github.com/patriceckhart/zot/packages/agent/ext"
 )
 
 type todoItem struct {
@@ -28,7 +28,7 @@ type toolArgs struct {
 }
 
 type app struct {
-	ext  *zotext.Extension
+	e    *ext.Extension
 	mu   sync.Mutex
 	path string
 	st   store
@@ -39,15 +39,15 @@ type app struct {
 const panelID = "todos-main"
 
 func main() {
-	ext := zotext.New("todo-panel", "0.3.0")
-	a := &app{ext: ext}
-	ext.Command("todo", "open a persistent todo panel", func(args string) zotext.Response {
+	e := ext.New("todo-panel", "0.3.0")
+	a := &app{e: e}
+	e.Command("todo", "open a persistent todo panel", func(args string) ext.Response {
 		if err := a.ensureLoaded(); err != nil {
-			return zotext.Errorf("load todos: %v", err)
+			return ext.Errorf("load todos: %v", err)
 		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		return zotext.OpenPanel(panelID, a.title(), a.renderLines(), a.footer())
+		return ext.OpenPanel(panelID, a.title(), a.renderLines(), a.footer())
 	})
 	schema, _ := json.Marshal(map[string]any{
 		"type": "object",
@@ -58,9 +58,9 @@ func main() {
 		},
 		"required": []string{"action"},
 	})
-	ext.Tool("todo_manage", "List, add, complete, edit, or remove todos by title.", schema, a.handleTool)
-	ext.OnPanelKey(panelID, a.handleKey, nil)
-	if err := ext.Run(); err != nil {
+	e.Tool("todo_manage", "List, add, complete, edit, or remove todos by title.", schema, a.handleTool)
+	e.OnPanelKey(panelID, a.handleKey, nil)
+	if err := e.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -72,9 +72,9 @@ func (a *app) ensureLoaded() error {
 	if a.path != "" {
 		return nil
 	}
-	dir := a.ext.Host().DataDir
+	dir := a.e.Host().DataDir
 	if dir == "" {
-		dir = a.ext.Host().ExtensionDir
+		dir = a.e.Host().ExtensionDir
 	}
 	if dir == "" {
 		return fmt.Errorf("host did not provide extension_dir/data_dir")
@@ -178,12 +178,12 @@ func (a *app) footer() string {
 }
 
 func (a *app) rerenderLocked() {
-	a.ext.RenderPanel(panelID, a.title(), a.renderLines(), a.footer())
+	a.e.RenderPanel(panelID, a.title(), a.renderLines(), a.footer())
 }
 
 func (a *app) handleKey(key, text string) {
 	if err := a.ensureLoaded(); err != nil {
-		a.ext.Notify("error", fmt.Sprintf("todo: %v", err))
+		a.e.Notify("error", fmt.Sprintf("todo: %v", err))
 		return
 	}
 	a.mu.Lock()
@@ -220,7 +220,7 @@ func (a *app) handleKey(key, text string) {
 	}
 	a.clampLocked()
 	if err := a.saveLocked(); err != nil {
-		a.ext.Notify("error", fmt.Sprintf("save todos: %v", err))
+		a.e.Notify("error", fmt.Sprintf("save todos: %v", err))
 	}
 	a.rerenderLocked()
 }
@@ -253,25 +253,25 @@ func (a *app) handleEditModeLocked(key, text string) {
 		}
 	}
 	if err := a.saveLocked(); err != nil {
-		a.ext.Notify("error", fmt.Sprintf("save todos: %v", err))
+		a.e.Notify("error", fmt.Sprintf("save todos: %v", err))
 	}
 	a.rerenderLocked()
 }
 
-func (a *app) handleTool(args json.RawMessage) zotext.ToolResult {
+func (a *app) handleTool(args json.RawMessage) ext.ToolResult {
 	if err := a.ensureLoaded(); err != nil {
-		return zotext.TextErrorResult("load todos: " + err.Error())
+		return ext.TextErrorResult("load todos: " + err.Error())
 	}
 	var in toolArgs
 	if err := json.Unmarshal(args, &in); err != nil {
-		return zotext.TextErrorResult("invalid args: " + err.Error())
+		return ext.TextErrorResult("invalid args: " + err.Error())
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	switch in.Action {
 	case "list":
 		if len(a.st.Items) == 0 {
-			return zotext.TextResult("No todos.")
+			return ext.TextResult("No todos.")
 		}
 		var lines []string
 		for _, it := range a.st.Items {
@@ -281,48 +281,48 @@ func (a *app) handleTool(args json.RawMessage) zotext.ToolResult {
 			}
 			lines = append(lines, mark+" "+it.Text)
 		}
-		return zotext.TextResult(strings.Join(lines, "\n"))
+		return ext.TextResult(strings.Join(lines, "\n"))
 	case "add":
 		if strings.TrimSpace(in.Title) == "" {
-			return zotext.TextErrorResult("title is required for add")
+			return ext.TextErrorResult("title is required for add")
 		}
 		a.st.Items = append(a.st.Items, todoItem{Text: strings.TrimSpace(in.Title)})
 		a.st.Cursor = len(a.st.Items) - 1
 	case "complete":
 		idx := a.findByTitleLocked(in.Title)
 		if idx < 0 {
-			return zotext.TextErrorResult("todo not found: " + in.Title)
+			return ext.TextErrorResult("todo not found: " + in.Title)
 		}
 		a.st.Items[idx].Done = true
 		a.st.Cursor = idx
 	case "edit":
 		idx := a.findByTitleLocked(in.Title)
 		if idx < 0 {
-			return zotext.TextErrorResult("todo not found: " + in.Title)
+			return ext.TextErrorResult("todo not found: " + in.Title)
 		}
 		if strings.TrimSpace(in.NewTitle) == "" {
-			return zotext.TextErrorResult("new_title is required for edit")
+			return ext.TextErrorResult("new_title is required for edit")
 		}
 		a.st.Items[idx].Text = strings.TrimSpace(in.NewTitle)
 		a.st.Cursor = idx
 	case "remove":
 		idx := a.findByTitleLocked(in.Title)
 		if idx < 0 {
-			return zotext.TextErrorResult("todo not found: " + in.Title)
+			return ext.TextErrorResult("todo not found: " + in.Title)
 		}
 		a.st.Items = append(a.st.Items[:idx], a.st.Items[idx+1:]...)
 	case "":
-		return zotext.TextErrorResult("action is required")
+		return ext.TextErrorResult("action is required")
 	default:
-		return zotext.TextErrorResult("unsupported action: " + in.Action)
+		return ext.TextErrorResult("unsupported action: " + in.Action)
 	}
 	if err := a.saveLocked(); err != nil {
-		return zotext.TextErrorResult("save todos: " + err.Error())
+		return ext.TextErrorResult("save todos: " + err.Error())
 	}
 	if a.mode == "" {
 		a.rerenderLocked()
 	}
-	return zotext.TextResult("ok")
+	return ext.TextResult("ok")
 }
 
 func (a *app) findByTitleLocked(title string) int {

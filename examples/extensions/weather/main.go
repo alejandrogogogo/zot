@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/patriceckhart/zot/pkg/zotext"
+	"github.com/patriceckhart/zot/packages/agent/ext"
 )
 
 const weatherSchema = `{
@@ -36,27 +36,27 @@ const weatherSchema = `{
 }`
 
 func main() {
-	ext := zotext.New("weather", "1.0.0")
+	e := ext.New("weather", "1.0.0")
 
-	ext.Tool("weather", "Get the current weather for a city.", json.RawMessage(weatherSchema), func(args json.RawMessage) zotext.ToolResult {
+	e.Tool("weather", "Get the current weather for a city.", json.RawMessage(weatherSchema), func(args json.RawMessage) ext.ToolResult {
 		var in struct {
 			City string `json:"city"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
-			return zotext.TextErrorResult("invalid args: " + err.Error())
+			return ext.TextErrorResult("invalid args: " + err.Error())
 		}
 		city := strings.TrimSpace(in.City)
 		if city == "" {
-			return zotext.TextErrorResult("city is required")
+			return ext.TextErrorResult("city is required")
 		}
 		// Stable fake "weather": derive temperature + condition from a
 		// hash of the city name so the same city always reports the
 		// same thing. No API calls, no timezone math, no surprises.
-		return zotext.TextResult(fakeWeather(city))
+		return ext.TextResult(fakeWeather(city))
 	})
 
-	if err := ext.Run(); err != nil {
-		ext.Logf("fatal: %v", err)
+	if err := e.Run(); err != nil {
+		e.Logf("fatal: %v", err)
 	}
 }
 

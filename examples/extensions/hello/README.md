@@ -1,7 +1,7 @@
 # hello — example zot extension (Go)
 
 A minimal example showing how to register slash commands with the
-`zotext` SDK.
+`ext` SDK.
 
 ## Build
 
@@ -31,5 +31,5 @@ In zot, type:
 
 ## See also
 
-- `pkg/zotext` — Go SDK
+- `packages/agent/ext` — Go SDK
 - `docs/extensions.md` — protocol reference for any-language extensions

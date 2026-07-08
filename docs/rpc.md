@@ -2,7 +2,7 @@
 
 `zot rpc` runs the agent runtime as a subprocess that speaks newline-delimited JSON on stdin and stdout. Use it from any language that can spawn a process and read/write its pipes — Go, TypeScript, Python, Rust, shell, anything.
 
-For a Go program embedding the runtime in-process, use the `pkg/zotcore` SDK instead. The wire format below mirrors the SDK's types one-for-one so consumers can share parsing code.
+For a Go program embedding the runtime in-process, use the `packages/agent/sdk` SDK instead. The wire format below mirrors the SDK's types one-for-one so consumers can share parsing code.
 
 ## Quick start
 
@@ -223,7 +223,7 @@ See `examples/rpc/` for working implementations in:
 - `shell` — `bash` + `jq` one-liner
 - `python` — `subprocess.Popen` + `json.loads` per line
 - `node` — `child_process.spawn` + `readline`
-- `go` — direct subprocess wrapper (the `pkg/zotcore` SDK is the in-process Go API)
+- `go` — direct subprocess wrapper (the `packages/agent/sdk` SDK is the in-process Go API)
 
 ## Versioning
 
