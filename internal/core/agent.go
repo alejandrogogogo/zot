@@ -66,6 +66,13 @@ type Agent struct {
 	// current and a crash recovers the right cost figure.
 	OnUsage func(cumulative provider.Usage)
 
+	// OnTranscriptCompacted, if set, fires after Compact replaces the
+	// in-memory transcript with the synthetic summary plus kept tail.
+	// Hosts wire this to append an explicit compaction checkpoint to
+	// the session log; per-message append hooks do not fire for this
+	// wholesale transcript replacement.
+	OnTranscriptCompacted func(messages []provider.Message)
+
 	mu       sync.Mutex
 	messages []provider.Message
 	// rev increments whenever the transcript slice is replaced or a

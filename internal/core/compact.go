@@ -113,7 +113,14 @@ func (a *Agent) Compact(ctx context.Context, keepTail int, sink func(delta strin
 
 	a.mu.Lock()
 	a.messages = next
+	a.rev++
+	onCompacted := a.OnTranscriptCompacted
+	persisted := append([]provider.Message(nil), next...)
 	a.mu.Unlock()
+
+	if onCompacted != nil {
+		onCompacted(persisted)
+	}
 
 	return summary, nil
 }

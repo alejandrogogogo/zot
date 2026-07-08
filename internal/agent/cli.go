@@ -575,12 +575,23 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 		}
 		_ = sess.AppendUsage(cum, cum)
 	}
+	persistCompaction := func(messages []provider.Message) {
+		persistMu.Lock()
+		defer persistMu.Unlock()
+		if sess == nil {
+			return
+		}
+		if err := sess.AppendCompaction(messages); err == nil {
+			sessBaselineMsgs = len(messages)
+		}
+	}
 	wireAgentPersist := func(a *core.Agent) *core.Agent {
 		if a == nil {
 			return a
 		}
 		a.OnMessageAppended = persistMessage
 		a.OnUsage = persistUsage
+		a.OnTranscriptCompacted = persistCompaction
 		return a
 	}
 	wireAgentPersist(ag)
