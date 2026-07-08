@@ -63,7 +63,14 @@ func (d *extPanelDialog) Render(th tui.Theme, width int) []string {
 	for _, l := range d.lines {
 		plain := stripANSIBytes(l)
 		trimmed := strings.TrimLeft(plain, " ")
-		selected := strings.HasPrefix(trimmed, "▸ ") || strings.HasPrefix(trimmed, "● ")
+		// Selection markers, in order of precedence:
+		//   "▸ " / "● "  visible glyph the user sees
+		//   "\u200b"      invisible zero-width-space sentinel for
+		//                 extensions that want the row highlight
+		//                 without rendering an arrow
+		selected := strings.HasPrefix(trimmed, "▸ ") ||
+			strings.HasPrefix(trimmed, "● ") ||
+			strings.HasPrefix(trimmed, "\u200b")
 		out = append(out, styleExtPanelLine(th, l, plain, width, selected))
 	}
 	if strings.TrimSpace(d.footer) != "" {
