@@ -910,13 +910,17 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 		BuildAgentForRescue:        buildAgentForRescue,
 		LoggedInProviders: func() []string {
 			var out []string
-			for _, p := range []string{"anthropic", "openai", "openai-codex", "kimi", "deepseek", "google"} {
-				if _, _, err := ResolveCredential(p, ""); err == nil {
+			seen := map[string]bool{}
+			for _, p := range knownProviders {
+				if _, _, err := ResolveCredential(p, ""); err == nil && !seen[p] {
 					out = append(out, p)
+					seen[p] = true
 				}
 			}
 			// Ollama models are always available (no auth needed).
-			out = append(out, "ollama")
+			if !seen["ollama"] {
+				out = append(out, "ollama")
+			}
 			return out
 		},
 		LoadSession: loadSession,

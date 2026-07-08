@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/patriceckhart/zot/internal/auth"
+	"github.com/patriceckhart/zot/internal/provider"
 	"github.com/patriceckhart/zot/internal/tui"
 )
 
@@ -22,6 +23,8 @@ const (
 	loginStepPasteCode           // user pastes the auth code here
 	loginStepDone                // success or error, waiting for key to dismiss
 )
+
+const loginProviderPageSize = 8
 
 // loginDialog is a tiny inline dialog rendered above the editor while
 // the user picks their login method and provider.
@@ -65,7 +68,13 @@ func (d *loginDialog) Open(zotHome string) {
 	d.success = false
 	d.url = ""
 	d.cursor = 0
-	d.status = map[string]string{"anthropic": "", "openai": "", "openai-codex": "", "kimi": "", "deepseek": "", "google": ""}
+	d.status = map[string]string{}
+	for _, p := range providersForMethod("apikey") {
+		d.status[p] = ""
+	}
+	for _, p := range providersForMethod("oauth") {
+		d.status[p] = ""
+	}
 	// Best-effort: if the auth file can't be read, treat every
 	// provider as not-logged-in. The status line just won't show
 	// anything useful in that case, which is fine — the user
@@ -84,6 +93,10 @@ func (d *loginDialog) Open(zotHome string) {
 		d.status["kimi"] = creds.Method("kimi")
 		d.status["deepseek"] = creds.Method("deepseek")
 		d.status["google"] = creds.Method("google")
+		d.status["github-copilot"] = creds.Method("github-copilot")
+		for p := range creds.AdditionalAPIKeyCreds {
+			d.status[p] = creds.Method(p)
+		}
 	}
 }
 
@@ -103,7 +116,7 @@ func (d *loginDialog) Render(th tui.Theme, width int) []string {
 	case loginStepMethod:
 		opts := []string{
 			"api key",
-			"subscription (claude pro/max - chatgpt plus/pro - kimi code)",
+			"subscription (claude pro/max - chatgpt plus/pro - chatgpt codex - kimi code - github copilot)",
 		}
 		lines = append(lines, frameHeader(th, "login", width))
 		for _, l := range d.renderStatusLines(th) {
@@ -125,24 +138,21 @@ func (d *loginDialog) Render(th tui.Theme, width int) []string {
 		for _, l := range d.renderStatusLines(th) {
 			lines = append(lines, l)
 		}
-		lines = append(lines, th.FG256(th.Muted, "choose provider:"))
-		for i, o := range opts {
-			// Annotate each provider with its current login
-			// state so the user can see at a glance which will
-			// be replaced if they pick it.
-			tag := ""
-			switch d.status[o] {
-			case "apikey":
-				tag = "  (api key)"
-			case "oauth":
-				tag = "  (subscription)"
-			}
-			plain := "  " + providerLabel(o) + tag
+		lines = append(lines, th.FG256(th.Muted, "pick a provider (↑/↓, enter, esc to cancel)"))
+		start, end := d.providerPage(len(opts))
+		for i := start; i < end; i++ {
+			o := opts[i]
+			tag := providerPickerTag(d.method, d.status[o])
+			label := "  " + providerLabel(o)
+			plain := label + tag
 			if i == d.cursor {
 				lines = append(lines, th.PadHighlight(plain, width))
 			} else {
-				lines = append(lines, th.FG256(th.Muted, plain))
+				lines = append(lines, th.FG256(th.Muted, label)+th.FG256(th.Accent, tag))
 			}
+		}
+		if len(opts) > loginProviderPageSize {
+			lines = append(lines, th.FG256(th.Muted, fmt.Sprintf("  (%d/%d)", d.cursor+1, len(opts))))
 		}
 		lines = append(lines, frameRule(th, width))
 	case loginStepWaiting:
@@ -212,28 +222,49 @@ func (d *loginDialog) Render(th tui.Theme, width int) []string {
 // subscription product at all).
 func providersForMethod(method string) []string {
 	if method == "oauth" {
-		return []string{"anthropic", "openai-codex", "kimi"}
+		return []string{"anthropic", "openai-codex", "kimi", "github-copilot"}
 	}
-	return []string{"anthropic", "openai", "kimi", "deepseek", "google"}
+	return auth.APIKeyProviders()
 }
 
 // providerLabel returns the user-facing label for a provider id.
-func providerLabel(id string) string {
-	switch id {
-	case "anthropic":
-		return "Anthropic (Claude Pro/Max)"
-	case "openai":
-		return "OpenAI"
-	case "openai-codex":
-		return "OpenAI Codex (ChatGPT Plus/Pro)"
-	case "kimi":
-		return "Kimi Code"
-	case "deepseek":
-		return "DeepSeek"
-	case "google":
-		return "Google (Gemini API key)"
+func providerLabel(id string) string { return provider.ProviderLabel(id) }
+
+func providerPickerTag(method, status string) string {
+	switch method {
+	case "apikey":
+		// In the API-key picker, only call out an existing subscription so
+		// users know choosing this provider will add/replace API-key auth
+		// while subscription auth is still configured. Unconfigured rows do
+		// not need a redundant "api key" suffix.
+		if status == "oauth" {
+			return "  (subscription configured)"
+		}
+	case "oauth":
+		// In the subscription picker, only call out an existing API key.
+		if status == "apikey" {
+			return "  (api key configured)"
+		}
 	}
-	return id
+	return ""
+}
+
+func (d *loginDialog) providerPage(total int) (start, end int) {
+	if total <= loginProviderPageSize {
+		return 0, total
+	}
+	if d.cursor < 0 {
+		d.cursor = 0
+	}
+	if d.cursor >= total {
+		d.cursor = total - 1
+	}
+	start = (d.cursor / loginProviderPageSize) * loginProviderPageSize
+	end = start + loginProviderPageSize
+	if end > total {
+		end = total
+	}
+	return start, end
 }
 
 // renderStatusLines returns an overview of the current login
@@ -253,7 +284,8 @@ func (d *loginDialog) renderStatusLines(th tui.Theme) []string {
 	kimi := d.status["kimi"]
 	ds := d.status["deepseek"]
 	goog := d.status["google"]
-	if anth == "" && op == "" && codex == "" && kimi == "" && ds == "" && goog == "" {
+	gh := d.status["github-copilot"]
+	if anth == "" && op == "" && codex == "" && kimi == "" && ds == "" && goog == "" && gh == "" {
 		return nil
 	}
 	row := func(id, method string) string {
@@ -272,15 +304,26 @@ func (d *loginDialog) renderStatusLines(th tui.Theme) []string {
 		}
 		return "  " + mark + " " + body
 	}
-	return []string{
+	out := []string{
 		row("anthropic", anth),
 		row("openai", op),
 		row("openai-codex", codex),
 		row("kimi", kimi),
 		row("deepseek", ds),
 		row("google", goog),
-		"",
+		row("github-copilot", gh),
 	}
+	for _, p := range providersForMethod("apikey") {
+		switch p {
+		case "anthropic", "openai", "openai-codex", "kimi", "deepseek", "google", "github-copilot":
+			continue
+		}
+		if method := d.status[p]; method != "" {
+			out = append(out, row(p, method))
+		}
+	}
+	out = append(out, "")
+	return out
 }
 
 // Key is the result of handling a key press.
@@ -347,6 +390,17 @@ func (d *loginDialog) handleProviderKey(k tui.Key) loginDialogAction {
 		providers := providersForMethod(d.method)
 		if d.cursor < len(providers)-1 {
 			d.cursor++
+		}
+	case tui.KeyPageUp:
+		d.cursor -= loginProviderPageSize
+		if d.cursor < 0 {
+			d.cursor = 0
+		}
+	case tui.KeyPageDown:
+		providers := providersForMethod(d.method)
+		d.cursor += loginProviderPageSize
+		if d.cursor >= len(providers) {
+			d.cursor = len(providers) - 1
 		}
 	case tui.KeyEsc:
 		d.Close()

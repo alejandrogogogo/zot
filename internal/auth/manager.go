@@ -81,7 +81,7 @@ func (m *Manager) Close() {
 // StartAPIKey launches the API-key login flow.
 func (m *Manager) StartAPIKey(provider string) (string, error) {
 	if !isKnownAPIKeyProvider(provider) {
-		return "", fmt.Errorf("provider must be anthropic, openai, kimi, deepseek, or google")
+		return "", fmt.Errorf(apiKeyProviderMessage())
 	}
 	if err := m.ensureKeyServer(); err != nil {
 		return "", err
@@ -135,6 +135,9 @@ func (m *Manager) StartOAuth(provider string) (string, error) {
 	if provider == "kimi" {
 		return m.StartKimiDeviceOAuth()
 	}
+	if provider == "github-copilot" {
+		return m.StartGitHubCopilotDeviceOAuth()
+	}
 	storeProvider := provider
 	var op OAuthProvider
 	switch provider {
@@ -148,7 +151,7 @@ func (m *Manager) StartOAuth(provider string) (string, error) {
 	case "deepseek":
 		return "", fmt.Errorf("deepseek login is api-key only; use api key login")
 	default:
-		return "", fmt.Errorf("provider must be anthropic, openai, openai-codex, kimi, deepseek, or google")
+		return "", fmt.Errorf("provider must be anthropic, openai, openai-codex, kimi, github-copilot, deepseek, or google")
 	}
 
 	m.mu.Lock()
@@ -254,6 +257,44 @@ func (m *Manager) StartKimiDeviceOAuth() (string, error) {
 	return url, nil
 }
 
+// StartGitHubCopilotDeviceOAuth starts GitHub Copilot's device-code subscription login.
+func (m *Manager) StartGitHubCopilotDeviceOAuth() (string, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.mu.Lock()
+	if m.oauthCancel != nil {
+		m.oauthCancel()
+	}
+	m.oauthCtx = ctx
+	m.oauthCancel = cancel
+	m.mu.Unlock()
+
+	dev, err := RequestGitHubCopilotDeviceAuthorization(ctx)
+	if err != nil {
+		return "", err
+	}
+	loginURL := dev.VerificationURI
+	if dev.UserCode != "" {
+		loginURL += "?user_code=" + url.QueryEscape(dev.UserCode)
+	}
+	go m.maybeOpen(loginURL)
+	m.emit(Event{Kind: "started", Provider: "github-copilot", Method: "oauth", URL: loginURL})
+	go func() {
+		tok, err := PollGitHubCopilotDeviceToken(ctx, dev)
+		if err != nil {
+			if ctx.Err() == nil {
+				m.emit(Event{Kind: "error", Provider: "github-copilot", Method: "oauth", Message: err.Error()})
+			}
+			return
+		}
+		if err := m.store.SetOAuth("github-copilot", *tok); err != nil {
+			m.emit(Event{Kind: "error", Provider: "github-copilot", Method: "oauth", Message: err.Error()})
+			return
+		}
+		m.emit(Event{Kind: "success", Provider: "github-copilot", Method: "oauth"})
+	}()
+	return loginURL, nil
+}
+
 // StartManualOAuth begins an OAuth flow but does NOT start a local
 // callback server or open a browser. The returned URL is shown to the
 // user so they can complete the authorization on another device; the
@@ -261,6 +302,9 @@ func (m *Manager) StartKimiDeviceOAuth() (string, error) {
 func (m *Manager) StartManualOAuth(provider string) (string, error) {
 	if provider == "kimi" {
 		return m.StartKimiDeviceOAuth()
+	}
+	if provider == "github-copilot" {
+		return m.StartGitHubCopilotDeviceOAuth()
 	}
 	storeProvider := provider
 	var op OAuthProvider
@@ -275,7 +319,7 @@ func (m *Manager) StartManualOAuth(provider string) (string, error) {
 	case "deepseek":
 		return "", fmt.Errorf("deepseek login is api-key only; use api key login")
 	default:
-		return "", fmt.Errorf("provider must be anthropic, openai, openai-codex, kimi, deepseek, or google")
+		return "", fmt.Errorf("provider must be anthropic, openai, openai-codex, kimi, github-copilot, deepseek, or google")
 	}
 
 	pkce, err := NewPKCE()

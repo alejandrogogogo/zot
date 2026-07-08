@@ -16,11 +16,13 @@ import (
 
 // Credentials is the on-disk schema.
 type Credentials struct {
-	Anthropic ProviderCreds `json:"anthropic,omitempty"`
-	OpenAI    ProviderCreds `json:"openai,omitempty"`
-	Kimi      ProviderCreds `json:"kimi,omitempty"`
-	Google    ProviderCreds `json:"google,omitempty"`
-	DeepSeek  ProviderCreds `json:"deepseek,omitempty"`
+	Anthropic             ProviderCreds            `json:"anthropic,omitempty"`
+	OpenAI                ProviderCreds            `json:"openai,omitempty"`
+	Kimi                  ProviderCreds            `json:"kimi,omitempty"`
+	Google                ProviderCreds            `json:"google,omitempty"`
+	DeepSeek              ProviderCreds            `json:"deepseek,omitempty"`
+	GithubCopilot         ProviderCreds            `json:"github_copilot,omitempty"`
+	AdditionalAPIKeyCreds map[string]ProviderCreds `json:"additional_api_key_creds,omitempty"`
 }
 
 // ProviderCreds holds credentials for a single provider. Most providers
@@ -90,8 +92,29 @@ func (c *Credentials) get(provider string) *ProviderCreds {
 		return &c.Google
 	case "deepseek":
 		return &c.DeepSeek
+	case "github-copilot":
+		return &c.GithubCopilot
+	}
+	if c.AdditionalAPIKeyCreds != nil {
+		if p, ok := c.AdditionalAPIKeyCreds[provider]; ok {
+			return &p
+		}
 	}
 	return nil
+}
+
+func (c *Credentials) setAdditional(provider string, p ProviderCreds) {
+	if c.AdditionalAPIKeyCreds == nil {
+		c.AdditionalAPIKeyCreds = map[string]ProviderCreds{}
+	}
+	if p.APIKey == "" && p.OAuth == nil {
+		delete(c.AdditionalAPIKeyCreds, provider)
+		if len(c.AdditionalAPIKeyCreds) == 0 {
+			c.AdditionalAPIKeyCreds = nil
+		}
+		return
+	}
+	c.AdditionalAPIKeyCreds[provider] = p
 }
 
 // Store is a mutex-guarded read/write handle to the auth file.
@@ -134,9 +157,16 @@ func (s *Store) SetAPIKey(provider, key string) error {
 	if err != nil {
 		return err
 	}
+	if cur, ok := c.AdditionalAPIKeyCreds[provider]; ok {
+		cur.APIKey = key
+		cur.OAuth = nil
+		c.setAdditional(provider, cur)
+		return s.saveLocked(c)
+	}
 	p := c.get(provider)
 	if p == nil {
-		return fmt.Errorf("unknown provider %q", provider)
+		c.setAdditional(provider, ProviderCreds{APIKey: key})
+		return s.saveLocked(c)
 	}
 	p.APIKey = key
 	if provider != "openai" {
@@ -153,9 +183,16 @@ func (s *Store) SetOAuth(provider string, tok OAuthToken) error {
 	if err != nil {
 		return err
 	}
+	if cur, ok := c.AdditionalAPIKeyCreds[provider]; ok {
+		cur.APIKey = ""
+		cur.OAuth = &tok
+		c.setAdditional(provider, cur)
+		return s.saveLocked(c)
+	}
 	p := c.get(provider)
 	if p == nil {
-		return fmt.Errorf("unknown provider %q", provider)
+		c.setAdditional(provider, ProviderCreds{OAuth: &tok})
+		return s.saveLocked(c)
 	}
 	if provider != "openai" {
 		p.APIKey = ""
@@ -172,9 +209,14 @@ func (s *Store) Clear(provider string) error {
 	if err != nil {
 		return err
 	}
+	if _, ok := c.AdditionalAPIKeyCreds[provider]; ok {
+		c.setAdditional(provider, ProviderCreds{})
+		return s.saveLocked(c)
+	}
 	p := c.get(provider)
 	if p == nil {
-		return fmt.Errorf("unknown provider %q", provider)
+		c.setAdditional(provider, ProviderCreds{})
+		return s.saveLocked(c)
 	}
 	*p = ProviderCreds{}
 	return s.saveLocked(c)
@@ -188,9 +230,14 @@ func (s *Store) ClearAPIKey(provider string) error {
 	if err != nil {
 		return err
 	}
+	if cur, ok := c.AdditionalAPIKeyCreds[provider]; ok {
+		cur.APIKey = ""
+		c.setAdditional(provider, cur)
+		return s.saveLocked(c)
+	}
 	p := c.get(provider)
 	if p == nil {
-		return fmt.Errorf("unknown provider %q", provider)
+		return nil
 	}
 	p.APIKey = ""
 	return s.saveLocked(c)
@@ -204,9 +251,14 @@ func (s *Store) ClearOAuth(provider string) error {
 	if err != nil {
 		return err
 	}
+	if cur, ok := c.AdditionalAPIKeyCreds[provider]; ok {
+		cur.OAuth = nil
+		c.setAdditional(provider, cur)
+		return s.saveLocked(c)
+	}
 	p := c.get(provider)
 	if p == nil {
-		return fmt.Errorf("unknown provider %q", provider)
+		return nil
 	}
 	p.OAuth = nil
 	return s.saveLocked(c)
