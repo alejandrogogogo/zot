@@ -141,7 +141,7 @@ zot --help
 | `--model <id>` | Pick the model (see `--list-models`). |
 | `--api-key <key>` | Override the API key. |
 | `--base-url <url>` | Override the provider base URL (tests, self-hosted). |
-| `--insecure` | Skip TLS certificate verification, only for the explicit `--base-url` endpoint (self-signed local/internal inference servers). Built-in providers, auth, and model discovery keep normal TLS verification. |
+| `--insecure` | Skip TLS certificate verification for the explicit `--base-url` endpoint or a `baseUrl` defined for a user model in `models.json` (self-signed local/internal inference servers). Built-in providers, auth, and model discovery keep normal TLS verification. |
 | `--system-prompt <text>` | Replace the default system prompt for this run (also overrides `$ZOT_HOME/SYSTEM.md`). |
 | `--append-system-prompt <text>` | Append text to the system prompt (repeatable). |
 | `--reasoning off\|minimum\|low\|medium\|high\|maximum` | Set thinking level on supported models (default: off). |
@@ -383,7 +383,27 @@ Supported fields per model: `id` (required), `name`, `reasoning`, `contextWindow
 
 Provider keys are normalized: `openai-codex` and `openai-responses` map to `openai`, `anthropic-messages` maps to `anthropic`, `moonshot`, `moonshot-ai`, and `kimi-code` map to `kimi`, and `deepseek-chat` and `deepseek-ai` map to `deepseek`. Built-in provider ids such as `groq`, `openrouter`, `github-copilot`, `amazon-bedrock`, `google-vertex`, `azure-openai-responses`, `fireworks`, `vercel-ai-gateway`, `mistral`, and `xai` can also be used directly.
 
-User-defined models show `source: user` in `--list-models` and take precedence over both the baked-in catalog and live-discovered models. Missing or invalid files are silently ignored.
+User-defined models show `source: user` in `--list-models` and take precedence over both the baked-in catalog and live-discovered models. Adding a `models.json` does not hide the built-in catalog; entries are merged on top of it. Missing or invalid files are silently ignored.
+
+#### Custom providers
+
+A top-level provider key that is not a built-in id defines a custom provider. Give it a provider-level `baseUrl` and an `api` wire format (`openai` for OpenAI-compatible chat completions, the default, or `anthropic` for the Anthropic messages API). A model-level `baseUrl` overrides the provider-level one for that model; an unknown `api` value falls back to `openai` with a warning.
+
+```json
+{
+  "providers": {
+    "my-company": {
+      "baseUrl": "https://llm.mycompany.com/v1",
+      "api": "openai",
+      "models": [
+        { "id": "company-llm-v2", "name": "Company LLM v2" }
+      ]
+    }
+  }
+}
+```
+
+Custom providers are first-class: they appear in `--list-models`, `/model`, and `/login`. `models.json` never stores secrets. Supply the key through `/login`, `--api-key`, or a derived environment variable in upper snake case (so `my-company` reads `MY_COMPANY_API_KEY`). Because many self-hosted gateways do not expose a model-list endpoint, custom provider keys are accepted and stored without a verification probe; an invalid key surfaces on the first model call.
 
 ### Kimi Code
 
