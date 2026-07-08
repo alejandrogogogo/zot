@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -20,6 +22,7 @@ import (
 	"github.com/patriceckhart/zot/internal/extproto"
 	"github.com/patriceckhart/zot/internal/provider"
 	"github.com/patriceckhart/zot/internal/skills"
+	"github.com/patriceckhart/zot/internal/swarm"
 	"github.com/patriceckhart/zot/internal/tui"
 )
 
@@ -218,6 +221,8 @@ func Run(rawArgs []string, version string) error {
 		return runJSONMode(ctx, args, version)
 	case ModeRPC:
 		return runRPCMode(ctx, args, version)
+	case ModeSwarmAgent:
+		return runSwarmAgentMode(ctx, args, version)
 	default:
 		return runInteractive(ctx, args, version)
 	}
@@ -534,6 +539,11 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 
 	var sess *core.Session
 	var sessBaselineMsgs int // messages already on disk when current session opened
+	// swarmMgr is constructed below, but loadSession (defined before
+	// the construction site) needs to re-scope it whenever the user
+	// swaps sessions. Forward-declare here so the closure can
+	// reference it; the assignment happens at the construction line.
+	var swarmMgr *swarm.Swarm
 	// persistMu guards sess + sessBaselineMsgs against concurrent access
 	// from the agent loop's per-message persistence hook (runs on the
 	// agent goroutine) and the TUI's session swap / flush callbacks
@@ -654,6 +664,14 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 		// the hydrated tail.
 		sessBaselineMsgs = fullMsgCount
 		persistMu.Unlock()
+		// Re-scope the swarm dashboard to the new session so /swarm
+		// only shows agents this session spawned. swarmMgr may be nil
+		// here if we haven't reached the construction site yet (it
+		// shouldn't be, since the interactive loop is what triggers
+		// loadSession, but the nil check is cheap insurance).
+		if swarmMgr != nil && newSess != nil {
+			swarmMgr.SetActiveSession(newSess.ID)
+		}
 		return nil
 	}
 
@@ -708,6 +726,29 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 	}()
 
 	initialCfg, _ := LoadConfig()
+
+	// Build the swarm supervisor. Root lives under ZotHome/swarm so
+	// worktrees survive across zot sessions and the user can hunt
+	// them down with `git worktree list` if anything misbehaves.
+	swarmMgr = swarm.New(swarm.Config{
+		Root:     filepath.Join(ZotHome(), "swarm"),
+		RepoRoot: r.CWD,
+	})
+	// Pull any previously-spawned agents off disk so the user can see,
+	// resume, or remove them from the dashboard. Failures here aren't
+	// fatal — the supervisor still works for new agents.
+	_, _ = swarmMgr.Reload()
+	// Scope the dashboard to the active host session so /swarm only
+	// shows agents this session spawned (and any pre-upgrade unscoped
+	// agents — see SnapshotAll docs). Updated again whenever the
+	// user swaps sessions via loadSession below.
+	if sess != nil {
+		swarmMgr.SetActiveSession(sess.ID)
+	}
+	// Best-effort shutdown on interactive exit: stop all running
+	// agents so they don't outlive their parent zot.
+	defer swarmMgr.StopAll()
+
 	iv = modes.NewInteractive(modes.InteractiveConfig{
 		Terminal:                   term,
 		Theme:                      tui.DetectThemeFromBackground(80 * time.Millisecond),
@@ -773,6 +814,7 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 			sessBaselineMsgs = len(currentAg.Messages())
 		},
 		Extensions:    extMgr,
+		Swarm:         swarmMgr,
 		ChangelogChan: changelogCh,
 		OnChangelogDismiss: func() {
 			// For dev builds (0.0.0) store the actual release version
@@ -894,6 +936,18 @@ func openOrCreateSession(args Args, r Resolved, ag *core.Agent, version string) 
 	switch {
 	case args.Session != "":
 		s, msgs, err = core.OpenSession(args.Session)
+		// The swarm-agent child passes a fixed --session path that
+		// may not exist yet on first Spawn. Treat ENOENT as "create
+		// a fresh session AT THIS PATH" so the conversation actually
+		// gets persisted; without this fallback the swarm child runs
+		// with sess==nil and every Resume re-starts with no memory
+		// of the prior turns. Other openers (--continue / --resume /
+		// the picker) never see ENOENT here because they only choose
+		// paths that already exist on disk.
+		if err != nil && errors.Is(err, os.ErrNotExist) {
+			s, err = core.NewSessionAtPath(args.Session, args.CWD, r.Provider, r.Model, version)
+			msgs = nil
+		}
 	case args.Continue:
 		latest := core.LatestSession(ZotHome(), args.CWD)
 		if latest != "" {

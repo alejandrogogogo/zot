@@ -45,3 +45,66 @@ func TestReadAgentsContextMissingFilesIsEmpty(t *testing.T) {
 		t.Fatalf("expected no context, got %q", got)
 	}
 }
+
+// TestResolveFallsBackWhenConfiguredModelIsGone reproduces the
+// startup failure caught by the user's screenshot: the persisted
+// config.json points at a model id that's no longer in the active
+// catalogue (because they edited models.json or zot's bundled
+// catalogue changed). Resolve must NOT error — strands the user
+// with no way to fix it from the TUI — and should repair the config
+// so the next launch is silent.
+func TestResolveFallsBackWhenConfiguredModelIsGone(t *testing.T) {
+	t.Setenv("ZOT_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	// Persist a stale model id.
+	stale := "gpt-5.5-pro-not-real"
+	if err := SaveConfig(Config{Provider: "openai", Model: stale}); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Resolve(Args{}, false)
+	if err != nil {
+		t.Fatalf("Resolve refused to launch with stale model: %v", err)
+	}
+	if r.Model == stale {
+		t.Fatalf("Resolve kept stale model %q", r.Model)
+	}
+	if r.Provider != "openai" {
+		t.Errorf("provider drifted: got %q; want openai", r.Provider)
+	}
+
+	// Config on disk should now hold the fallback so subsequent
+	// launches don't repeat the warning.
+	cfg, _ := LoadConfig()
+	if cfg.Model == stale {
+		t.Errorf("config.json still pins the stale model %q", cfg.Model)
+	}
+	if cfg.Model == "" {
+		t.Errorf("config.json was emptied; expected the fallback model id")
+	}
+}
+
+// TestResolveExplicitFlagStaleDoesNotRepairConfig confirms the
+// repair-on-disk happens ONLY when the stale id came from the
+// persisted config. If the user passed --model X explicitly and X is
+// unknown, we still fall back, but we don't touch their config.
+func TestResolveExplicitFlagStaleDoesNotRepairConfig(t *testing.T) {
+	t.Setenv("ZOT_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	good := "gpt-5"
+	if err := SaveConfig(Config{Provider: "openai", Model: good}); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Resolve(Args{Model: "gpt-totally-fake"}, false)
+	if err != nil {
+		t.Fatalf("Resolve errored on unknown --model: %v", err)
+	}
+	if r.Model == "gpt-totally-fake" {
+		t.Errorf("Resolve kept the bogus --model value")
+	}
+	cfg, _ := LoadConfig()
+	if cfg.Model != good {
+		t.Errorf("config.json was clobbered (was %q; now %q)", good, cfg.Model)
+	}
+}
