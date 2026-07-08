@@ -650,6 +650,26 @@ func TestCursorPosPromptEditor(t *testing.T) {
 	}
 }
 
+func TestCursorPosSpawnEditorWithInheritedModelMatchesPaddedRender(t *testing.T) {
+	d := newSwarmDialog()
+	d.SetCurrentModel("claude-sonnet-4-5", "anthropic")
+	d.Open(staticSnapshots(), nil, nil, func(task, model, provider string) error { return nil }, nil, nil, "")
+	_ = d.Render(tui.Theme{}, 80)
+	d.HandleKey(tui.Key{Kind: tui.KeyRune, Rune: 'n'})
+	if !d.spawning {
+		t.Fatal("setup: n did not enter spawning mode")
+	}
+
+	row, _ := d.CursorPos(80)
+	lines := padDialogFrame(d.Render(tui.Theme{}, 80))
+	if row < 0 || row >= len(lines) {
+		t.Fatalf("spawn CursorPos row = %d outside rendered lines %d", row, len(lines))
+	}
+	if got := stripANSIBytes(lines[row]); !strings.Contains(got, "▌") {
+		t.Fatalf("spawn CursorPos row %d = %q; want editor prompt row", row, got)
+	}
+}
+
 // TestSwarmDialogPOnNonRunningAgentShowsHint covers the regression
 // caught by the user's screenshot: pressing 'p' on a detached agent
 // dialled a dead unix socket and printed the raw path as an error.
