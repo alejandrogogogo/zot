@@ -931,6 +931,9 @@ func (i *Interactive) redraw() {
 	case i.extPanel.Active():
 		dialog = i.extPanel.Render(i.cfg.Theme, cols)
 	}
+	if len(dialog) > 0 {
+		dialog = padDialogFrame(dialog)
+	}
 
 	// Slash-command autocomplete: popup above the status line, only
 	// when the editor starts with "/" and no dialog is already open.
