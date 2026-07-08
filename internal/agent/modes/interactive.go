@@ -912,6 +912,7 @@ func (i *Interactive) redraw() {
 	// when the editor starts with "/" and no dialog is already open.
 	// Feed extension-registered commands into the suggester first so
 	// they show up in tab-complete + the popup alongside the built-ins.
+	i.suggest.SetJailed(i.cfg.Sandbox.Locked())
 	if i.cfg.Extensions != nil {
 		catalog := i.cfg.Extensions.Commands()
 		extra := make([]slashCommand, 0, len(catalog))
