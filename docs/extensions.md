@@ -316,6 +316,20 @@ Example:
 If `error` is non-empty, zot renders it as a red status line
 regardless of `action`.
 
+#### `submit` (one-way, any time)
+
+Submits text as a user prompt in the interactive host. If the agent is
+idle, zot starts a turn immediately. If a turn is already running, zot
+queues the prompt behind it using the same queue path as typed input.
+Empty or whitespace-only text is ignored.
+
+```json
+{"type":"submit","text":"Summarize the selected workspace."}
+```
+
+In print / JSON / RPC modes this frame is ignored because there is no
+interactive editor or prompt queue.
+
 #### `panel_render` (one-way, while a panel is open)
 
 Pushes a fresh frame for an already-open panel.
@@ -478,12 +492,19 @@ Reply with `shutdown_ack` and then exit.
 
 ```
 zot ext list                    list installed extensions and their state
+zot ext doctor                  diagnose load, registration, and conflict issues
 zot ext install <path|git-url>  copy / clone into $ZOT_HOME/extensions/
 zot ext remove <name>           delete an extension directory
 zot ext enable <name>           re-enable a disabled extension
 zot ext disable <name>          disable without removing
 zot ext logs <name> [-f]        cat / tail the extension's stderr
 ```
+
+`zot ext doctor` runs the same discovery path as zot startup, but reports
+what happened instead of changing the fail-soft runtime behavior. It shows
+manifest errors, disabled or shadowed extensions, subprocess load errors,
+ready/auto-ready status, registered commands/tools, registration conflicts,
+warnings, and each extension's stderr log path.
 
 `zot ext install <path>` does a recursive copy; `<git-url>` does a
 shallow clone. Both validate that the destination contains an
