@@ -83,9 +83,9 @@ func (p *ProcTerm) PeekByteTimeout(d time.Duration) (byte, bool, error) {
 
 // HideCursor, ShowCursor, ClearScreen, BracketedPasteOn/Off, etc.
 const (
-	SeqHideCursor        = "\x1b[?25l"
-	SeqShowCursor        = "\x1b[?25h"
-	SeqClearScreen       = "\x1b[2J\x1b[H"
+	SeqHideCursor  = "\x1b[?25l"
+	SeqShowCursor  = "\x1b[?25h"
+	SeqClearScreen = "\x1b[2J\x1b[H"
 	// SeqClearScreenNoHome is SeqClearScreen without the trailing
 	// cursor-home (\x1b[H). Use it whenever a MoveTo(...) follows
 	// immediately. VS Code's integrated terminal interprets a bare
