@@ -10,6 +10,7 @@ import (
 
 	"github.com/sahilm/fuzzy"
 
+	"github.com/patriceckhart/zot/packages/ignore"
 	"github.com/patriceckhart/zot/packages/tui"
 )
 
@@ -21,31 +22,11 @@ const (
 	maxRecursiveDepth   = 12
 )
 
-// recursiveSkipDirs are directory names never descended into during a
-// recursive scan. They dominate the entry budget without being useful
-// @-mention targets.
-var recursiveSkipDirs = map[string]bool{
-	".git":         true,
-	"node_modules": true,
-	".venv":        true,
-	"venv":         true,
-	"vendor":       true,
-	"target":       true,
-	"dist":         true,
-	"build":        true,
-	".idea":        true,
-	".vscode":      true,
-	"__pycache__":  true,
-	// Infrastructure-as-code provider/module caches. These hold copies
-	// of downloaded providers and generated module trees and can grow
-	// to hundreds of MB or deeply nested duplicates of the source.
-	".terraform":        true,
-	".terragrunt-cache": true,
-	".terraform.d":      true,
-	".pulumi":           true,
-	".serverless":       true,
-	"cdk.out":           true,
-}
+// alwaysSkipDir is never descended into during a recursive scan,
+// regardless of .gitignore. .git is a repo-internal directory that
+// real projects rarely list in their own .gitignore yet never want
+// surfaced as an @-mention target.
+const alwaysSkipDir = ".git"
 
 // fileSuggester provides an @-triggered file/directory picker popup.
 // Type "@" followed by an optional filter to list files in the working
@@ -162,8 +143,10 @@ func (s *fileSuggester) scan() []fileEntry {
 
 // scanRecursive walks the whole project tree below cwd and returns
 // every file and directory as a fileEntry whose rel is the path
-// relative to cwd. Common heavy directories (.git, node_modules, ...)
-// are skipped, and the walk stops once it hits the entry/depth caps.
+// relative to cwd. The walk honors the project's root .gitignore (so
+// build outputs, dependency directories, and tool caches like
+// .terraform/.terragrunt-cache stay out of the picker) plus an
+// unconditional .git skip, and stops once it hits the entry/depth caps.
 //
 // Results are cached by cwd + mtime of cwd. Unlike the flat scan a
 // single mtime can't catch every nested change, so the cache is best
@@ -180,6 +163,7 @@ func (s *fileSuggester) scanRecursive() []fileEntry {
 		return s.cachedAll
 	}
 
+	ig := ignore.Load(root)
 	var all []fileEntry
 	rootSep := strings.Count(root, string(os.PathSeparator))
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -192,18 +176,24 @@ func (s *fileSuggester) scanRecursive() []fileEntry {
 		if path == root {
 			return nil
 		}
-		name := d.Name()
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
+		// .gitignore patterns are matched against slash-separated paths.
+		if ig.Match(filepath.ToSlash(rel), d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if d.IsDir() {
-			if recursiveSkipDirs[name] {
+			if d.Name() == alwaysSkipDir {
 				return filepath.SkipDir
 			}
 			if strings.Count(path, string(os.PathSeparator))-rootSep >= maxRecursiveDepth {
 				return filepath.SkipDir
 			}
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return nil
 		}
 		all = append(all, fileEntry{
 			name:  rel,

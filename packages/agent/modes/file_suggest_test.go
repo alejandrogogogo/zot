@@ -171,19 +171,28 @@ func TestFileSuggesterRecursiveSkipsHeavyDirs(t *testing.T) {
 	}
 }
 
-// TestFileSuggesterRecursiveSkipsIaCCaches ensures infrastructure-as-
-// code provider/module caches are pruned so a recursive walk doesn't
-// drown in copies of downloaded providers or generated modules.
-func TestFileSuggesterRecursiveSkipsIaCCaches(t *testing.T) {
+// TestFileSuggesterRecursiveHonorsGitignore ensures the recursive walk
+// prunes anything listed in the project's root .gitignore — build
+// outputs, dependency dirs, and IaC tool caches like
+// .terraform/.terragrunt-cache — while still surfacing tracked files.
+func TestFileSuggesterRecursiveHonorsGitignore(t *testing.T) {
 	tmp := t.TempDir()
-	for _, dir := range []string{".terraform", ".terragrunt-cache", "cdk.out"} {
+	if err := os.WriteFile(filepath.Join(tmp, ".gitignore"),
+		[]byte(".terraform/\n.terragrunt-cache/\nnode_modules/\n*.log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ignored := []string{".terraform", ".terragrunt-cache", "node_modules"}
+	for _, dir := range ignored {
 		nested := filepath.Join(tmp, dir, "deep")
 		if err := os.MkdirAll(nested, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(nested, "junk.tf"), []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(nested, "junk"), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "debug.log"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(tmp, "main.tf"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -192,15 +201,19 @@ func TestFileSuggesterRecursiveSkipsIaCCaches(t *testing.T) {
 	s.SetCWD(tmp)
 	s.SetRecursive(true)
 
-	for _, e := range s.scan() {
-		for _, skip := range []string{".terraform", ".terragrunt-cache", "cdk.out"} {
+	all := s.scan()
+	for _, e := range all {
+		for _, skip := range ignored {
 			if e.rel == skip || strings.HasPrefix(e.rel, skip+string(filepath.Separator)) {
-				t.Fatalf("recursive scan descended into %s: %#v", skip, e)
+				t.Fatalf("recursive scan descended into gitignored %s: %#v", skip, e)
 			}
 		}
+		if e.rel == "debug.log" {
+			t.Fatalf("recursive scan surfaced gitignored *.log file: %#v", e)
+		}
 	}
-	if !containsEntry(s.scan(), "main.tf", false) {
-		t.Fatal("recursive scan missing main.tf")
+	if !containsEntry(all, "main.tf", false) {
+		t.Fatalf("recursive scan missing tracked main.tf: %#v", all)
 	}
 }
 
