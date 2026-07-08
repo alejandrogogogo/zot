@@ -285,6 +285,94 @@ func (c *bedrockClient) buildRequest(req Request) (*bedrockRequest, error) {
 	return out, nil
 }
 
+// resolveBedrockInferenceProfileID maps a bare foundation-model ID to
+// its region-matched cross-region inference-profile ID.
+//
+// Several newer Bedrock models (Anthropic Claude 4.x, DeepSeek, etc.)
+// cannot be invoked with on-demand throughput by their plain
+// foundation-model ID; Bedrock returns HTTP 400 demanding "the ID or
+// ARN of an inference profile that contains this model". The profile
+// ID is the same model ID with a geographic prefix (us/eu/apac/...).
+//
+// We only rewrite IDs that (a) lack an existing geo prefix and (b)
+// belong to a model family that requires a profile. IDs that already
+// carry a prefix (e.g. "eu.anthropic...", "global.anthropic...") or
+// fully-qualified ARNs are returned unchanged, so explicit user
+// choices and custom application inference profiles still work.
+func resolveBedrockInferenceProfileID(modelID, region string) string {
+	if modelID == "" {
+		return modelID
+	}
+	// ARNs are already inference-profile references; leave untouched.
+	if strings.HasPrefix(modelID, "arn:") {
+		return modelID
+	}
+	// Already geo-prefixed (us. / eu. / apac. / ap. / us-gov. / global.)?
+	if bedrockHasGeoPrefix(modelID) {
+		return modelID
+	}
+	if !bedrockRequiresInferenceProfile(modelID) {
+		return modelID
+	}
+	prefix := bedrockGeoPrefixForRegion(region)
+	if prefix == "" {
+		return modelID
+	}
+	return prefix + "." + modelID
+}
+
+// bedrockGeoPrefixes are the cross-region inference-profile geo
+// prefixes Bedrock uses. A model ID that starts with one of these
+// (followed by a dot) is already a profile reference.
+var bedrockGeoPrefixes = []string{"us-gov", "us", "eu", "apac", "ap", "global", "au"}
+
+func bedrockHasGeoPrefix(modelID string) bool {
+	for _, p := range bedrockGeoPrefixes {
+		if strings.HasPrefix(modelID, p+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// bedrockRequiresInferenceProfile reports whether a bare
+// foundation-model ID is one of the families AWS only exposes through
+// a cross-region inference profile for on-demand throughput.
+func bedrockRequiresInferenceProfile(modelID string) bool {
+	switch {
+	case strings.HasPrefix(modelID, "anthropic.claude-"):
+		return true
+	case strings.HasPrefix(modelID, "deepseek."):
+		return true
+	default:
+		return false
+	}
+}
+
+// bedrockGeoPrefixForRegion maps an AWS region to the geo prefix used
+// by its cross-region inference profiles. Returns "" when the region
+// has no known mapping, in which case the model ID is left unchanged.
+func bedrockGeoPrefixForRegion(region string) string {
+	switch {
+	case region == "":
+		return "us"
+	case strings.HasPrefix(region, "us-gov-"):
+		return "us-gov"
+	case strings.HasPrefix(region, "us-"):
+		return "us"
+	case strings.HasPrefix(region, "eu-"):
+		return "eu"
+	case strings.HasPrefix(region, "ap-"):
+		return "apac"
+	case strings.HasPrefix(region, "ca-"):
+		return "us"
+	case strings.HasPrefix(region, "sa-"):
+		return "us"
+	default:
+		return "us"
+	}
+}
+
 func (c *bedrockClient) Stream(ctx context.Context, req Request) (<-chan Event, error) {
 	wire, err := c.buildRequest(req)
 	if err != nil {
@@ -294,7 +382,8 @@ func (c *bedrockClient) Stream(ctx context.Context, req Request) (<-chan Event, 
 	if err != nil {
 		return nil, err
 	}
-	url := c.baseURL + "/model/" + req.Model + "/converse-stream"
+	modelID := resolveBedrockInferenceProfileID(req.Model, c.region)
+	url := c.baseURL + "/model/" + modelID + "/converse-stream"
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -317,7 +406,18 @@ func (c *bedrockClient) Stream(ctx context.Context, req Request) (<-chan Event, 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("bedrock: http %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		msg := strings.TrimSpace(string(b))
+		// A 403 on the bearer route is almost always a region mismatch:
+		// short-term Bedrock API keys are scoped to the region of the
+		// console session that minted them, but zot defaults to
+		// us-east-1. Surface the resolved region and the fix so the user
+		// is not left guessing why a freshly-copied key is "invalid".
+		if resp.StatusCode == http.StatusForbidden && c.bearerToken != "" {
+			return nil, fmt.Errorf(
+				"bedrock: http 403 (region=%s): %s\nhint: Bedrock API keys are region-scoped. If your key was created in another region, set AWS_REGION (e.g. AWS_REGION=eu-central-1) or pass --base-url https://bedrock-runtime.<region>.amazonaws.com",
+				c.region, msg)
+		}
+		return nil, fmt.Errorf("bedrock: http %d: %s", resp.StatusCode, msg)
 	}
 	out := make(chan Event, 16)
 	go c.runStream(ctx, resp, req, out)
@@ -350,6 +450,9 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 			return
 		}
 		eventType := evt.headerString(":event-type")
+		if eventType == "" {
+			eventType = bedrockEventTypeFromPayload(evt.payload)
+		}
 		messageType := evt.headerString(":message-type")
 		if messageType == "exception" {
 			out <- EventDone{Stop: StopError, Err: fmt.Errorf("bedrock exception (%s): %s", evt.headerString(":exception-type"), string(evt.payload)), Message: finalMsg}
@@ -368,7 +471,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 					} `json:"toolUse"`
 				} `json:"start"`
 			}
-			if err := json.Unmarshal(evt.payload, &d); err != nil {
+			if err := unmarshalBedrockEventPayload(evt.payload, "contentBlockStart", &d); err != nil {
 				continue
 			}
 			st := &bedrockBlockState{}
@@ -389,12 +492,13 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 					} `json:"toolUse"`
 				} `json:"delta"`
 			}
-			if err := json.Unmarshal(evt.payload, &d); err != nil {
+			if err := unmarshalBedrockEventPayload(evt.payload, "contentBlockDelta", &d); err != nil {
 				continue
 			}
 			st := contentBlocks[d.ContentBlockIndex]
 			if st == nil {
-				continue
+				st = &bedrockBlockState{}
+				contentBlocks[d.ContentBlockIndex] = st
 			}
 			if d.Delta.Text != "" {
 				st.text.WriteString(d.Delta.Text)
@@ -408,7 +512,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 			var d struct {
 				ContentBlockIndex int `json:"contentBlockIndex"`
 			}
-			if err := json.Unmarshal(evt.payload, &d); err != nil {
+			if err := unmarshalBedrockEventPayload(evt.payload, "contentBlockStop", &d); err != nil {
 				continue
 			}
 			st := contentBlocks[d.ContentBlockIndex]
@@ -431,7 +535,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 			var d struct {
 				StopReason string `json:"stopReason"`
 			}
-			_ = json.Unmarshal(evt.payload, &d)
+			_ = unmarshalBedrockEventPayload(evt.payload, "messageStop", &d)
 			switch d.StopReason {
 			case "tool_use":
 				stop = StopToolUse
@@ -451,7 +555,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 					CacheWriteInputTokens int `json:"cacheWriteInputTokens"`
 				} `json:"usage"`
 			}
-			if err := json.Unmarshal(evt.payload, &d); err == nil {
+			if err := unmarshalBedrockEventPayload(evt.payload, "metadata", &d); err == nil {
 				usage.InputTokens = d.Usage.InputTokens
 				usage.OutputTokens = d.Usage.OutputTokens
 				usage.CacheReadTokens = d.Usage.CacheReadInputTokens
@@ -472,6 +576,32 @@ type bedrockBlockState struct {
 	toolName  string
 	toolArgs  strings.Builder
 	text      strings.Builder
+}
+
+func bedrockEventTypeFromPayload(payload []byte) string {
+	var outer map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &outer); err != nil {
+		return ""
+	}
+	for _, name := range []string{"messageStart", "contentBlockStart", "contentBlockDelta", "contentBlockStop", "messageStop", "metadata"} {
+		if _, ok := outer[name]; ok {
+			return name
+		}
+	}
+	return ""
+}
+
+func unmarshalBedrockEventPayload(payload []byte, eventType string, dst any) error {
+	var outer map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &outer); err == nil {
+		if wrapped, ok := outer[eventType]; ok {
+			return json.Unmarshal(wrapped, dst)
+		}
+	}
+	if err := json.Unmarshal(payload, dst); err != nil {
+		return fmt.Errorf("bedrock: parse %s payload: %w", eventType, err)
+	}
+	return nil
 }
 
 // ---- event-stream binary framing parser ----
