@@ -3167,7 +3167,17 @@ func (i *Interactive) startTurnWithImages(parent context.Context, prompt string,
 	i.toolCalls = map[string]*tui.ToolCallView{}
 	i.toolOrder = nil
 	i.scrollOffset = 0 // jump back to the bottom on new turn
-	i.parkedTurn = 0   // starting a turn clears the /jump parked state
+	// Reset the auto-follow baseline so the very next render at
+	// interactive.go:1053 doesn't see a synthetic shrink between
+	// "last frame had the previous turn's tool overlay" and
+	// "this frame had it cleared above". Without this, the guard
+	// reads delta = -(rows in cleared overlay) and decrements
+	// scrollOffset, which on terminals that mirror zot's pane
+	// scroll into the host scrollbar visibly yanks the viewport.
+	// See autofollow_shrink_test.go for the exact arithmetic.
+	i.prevChatLen = 0
+	i.prevChatCols = 0
+	i.parkedTurn = 0 // starting a turn clears the /jump parked state
 	i.parkedTotal = 0
 	i.helpBlock = nil // hide the help block once the user asks something
 	i.mu.Unlock()
