@@ -101,6 +101,16 @@ type InteractiveConfig struct {
 	// callback returns the new agent message slice so the TUI can invalidate.
 	LoadSession func(path string) error
 
+	// ChangeCWD switches the running zot session's working directory
+	// to path. The host closes the current session, rebuilds the
+	// agent so tools / AGENTS.md / sandbox bind to the new cwd, and
+	// opens a fresh session there. Returns an error if path doesn't
+	// exist, isn't a directory, or the host can't rebuild the agent.
+	//
+	// Optional: not wired by every embedder. When nil the hidden /cd
+	// command surfaces a clear error rather than no-oping.
+	ChangeCWD func(path string) error
+
 	// CurrentSessionPath returns the path of the live session file
 	// on disk (the one every AppendMessage writes to). Used by
 	// /session export so the exporter ships the exact bytes on
@@ -2202,6 +2212,55 @@ func (i *Interactive) Submit(text string) {
 	i.startTurn(i.runCtx, text)
 }
 
+// ApplyChangedCWD is called by the host after a successful /cd hook.
+// The host has already rebuilt the agent and opened a fresh session
+// in the new cwd; this method swaps the fresh agent into the running
+// TUI, updates the displayed cwd, clears the transcript display
+// caches, and points the file picker at the new directory.
+//
+// The fresh agent's transcript is empty (new session) so the chat
+// view starts blank, matching what relaunching `zot --cwd <path>`
+// would show. Cost meters reset.
+func (i *Interactive) ApplyChangedCWD(ag *core.Agent, provider, model, cwd string) {
+	i.mu.Lock()
+	i.agent = ag
+	i.cfg.CWD = cwd
+	i.cfg.Provider = provider
+	i.cfg.Model = model
+	i.toolCalls = map[string]*tui.ToolCallView{}
+	i.toolOrder = nil
+	i.helpBlock = nil
+	i.parkedTurn = 0
+	i.statusErr = ""
+	i.mu.Unlock()
+	i.fileSuggest.Reset()
+	i.fileSuggest.SetCWD(cwd)
+	i.invalidate()
+}
+
+// SubmitSlash runs text as a slash command in the TUI as if the user
+// had typed it. text must start with '/' — callers that hand it
+// plain prose silently get a no-op so a misbehaving extension can't
+// run a stray prompt through this path. Read-only commands run in
+// place; commands that would mutate the transcript or replace the
+// agent cancel the active turn first via the same path the editor
+// uses for typed slash commands.
+func (i *Interactive) SubmitSlash(text string) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "/") {
+		return
+	}
+	head := text
+	if idx := strings.IndexAny(text, " \t"); idx >= 0 {
+		head = text[:idx]
+	}
+	if slashCancelsTurn(head) {
+		i.cancelAndWaitForIdle()
+	}
+	i.runSlash(i.runCtx, text)
+	i.invalidate()
+}
+
 // SubmitOrQueue runs text immediately if the agent is idle, or
 // appends it to the pending queue if a turn is already in flight.
 // Used by the telegram bridge (and by the editor submit path) so
@@ -2705,6 +2764,51 @@ func (i *Interactive) runSlash(ctx context.Context, cmd string) (done bool) {
 			break
 		}
 		i.startTurn(ctx, studyPrompt)
+	case "/cd":
+		// Hidden command: switch the running session's cwd. Not in
+		// slash_suggest, not in /help. Used by the workspaces
+		// extension's panel-key Enter handler so picking a row
+		// jumps zot into that directory without relaunching.
+		//
+		// Recovers the raw argument (path) from the original cmd
+		// string rather than parts, so paths with spaces survive.
+		// The host's ChangeCWD hook handles validation, session
+		// close + reopen, agent rebuild, sandbox re-rooting, and
+		// re-jail-if-jailed semantics.
+		if i.cfg.ChangeCWD == nil {
+			i.mu.Lock()
+			i.statusErr = "/cd unavailable: host did not wire ChangeCWD"
+			i.mu.Unlock()
+			break
+		}
+		path := strings.TrimSpace(strings.TrimPrefix(cmd, parts[0]))
+		if path == "" {
+			i.mu.Lock()
+			i.statusErr = "/cd: missing path"
+			i.mu.Unlock()
+			break
+		}
+		if err := i.cfg.ChangeCWD(path); err != nil {
+			i.mu.Lock()
+			i.statusErr = "/cd: " + err.Error()
+			i.statusOK = ""
+			i.mu.Unlock()
+			break
+		}
+		// ChangeCWD has already updated i.cfg.CWD and swapped the
+		// agent + session. Reset transient TUI state so the new
+		// session opens clean.
+		i.mu.Lock()
+		i.toolCalls = map[string]*tui.ToolCallView{}
+		i.toolOrder = nil
+		i.helpBlock = nil
+		i.parkedTurn = 0
+		i.statusOK = "cwd " + i.cfg.CWD
+		i.statusErr = ""
+		i.mu.Unlock()
+		i.fileSuggest.Reset()
+		i.fileSuggest.SetCWD(i.cfg.CWD)
+		i.invalidate()
 	case "/jail":
 		if i.cfg.Sandbox == nil {
 			i.mu.Lock()

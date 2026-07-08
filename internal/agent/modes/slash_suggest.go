@@ -23,7 +23,7 @@ type slashCommand struct {
 // the streaming response without trouble.
 func slashCancelsTurn(head string) bool {
 	switch head {
-	case "/clear", "/compact", "/logout", "/login", "/model", "/reload-ext":
+	case "/clear", "/compact", "/logout", "/login", "/model", "/reload-ext", "/cd":
 		return true
 	}
 	return false
@@ -166,9 +166,9 @@ func looksLikeSlashCommand(text string) bool {
 }
 
 // isKnownSlashCommand reports whether text's head matches a registered
-// slash command name in slashCatalog. Built-in only; extension
-// commands are looked up separately by the dispatcher (which
-// consults the extension manager).
+// slash command name in slashCatalog or hiddenSlashCommands. Built-in
+// only; extension commands are looked up separately by the dispatcher
+// (which consults the extension manager).
 func isKnownSlashCommand(text string) bool {
 	text = strings.TrimSpace(text)
 	if text == "" || text[0] != '/' {
@@ -183,7 +183,20 @@ func isKnownSlashCommand(text string) bool {
 			return true
 		}
 	}
+	for _, h := range hiddenSlashCommands {
+		if h == head {
+			return true
+		}
+	}
 	return false
+}
+
+// hiddenSlashCommands are dispatchable but intentionally absent from
+// the autocomplete popup, /help, and the README. Used for commands
+// driven by extensions or by other internal flows where surfacing
+// the verb to humans would be confusing or premature.
+var hiddenSlashCommands = []string{
+	"/cd",
 }
 
 func newSlashSuggester() *slashSuggester { return &slashSuggester{} }

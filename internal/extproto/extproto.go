@@ -116,6 +116,16 @@ type NotifyFromExt struct {
 	Message string `json:"message"`
 }
 
+// SubmitSlashFromExt is a spontaneous frame an extension can send at
+// any time (typically from a panel_key handler) to invoke a slash
+// command in the host's TUI as if the user had typed it. Text must
+// start with '/'. Reserved for internal / opt-in extensions today;
+// the wire format is stable but not yet exposed in the public docs.
+type SubmitSlashFromExt struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 type ShutdownAckFromExt struct {
 	Type string `json:"type"`
 }
