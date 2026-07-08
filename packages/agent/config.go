@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/patriceckhart/zot/packages/provider/auth"
@@ -16,10 +17,11 @@ import (
 
 // Config is the persisted user configuration.
 type Config struct {
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	Reasoning string `json:"reasoning"`
-	Theme     string `json:"theme"`
+	Provider    string   `json:"provider"`
+	Model       string   `json:"model"`
+	Reasoning   string   `json:"reasoning"`
+	Temperature *float32 `json:"temperature,omitempty"`
+	Theme       string   `json:"theme"`
 
 	// InlineImagesEnabled controls whether zot draws screenshots inline
 	// when the terminal supports an image protocol. nil/missing means
@@ -43,6 +45,9 @@ type Config struct {
 	// both flat and recursive modes). nil/missing means the default,
 	// which is on; false shows ignored entries. Toggle from /settings.
 	RespectGitignore *bool `json:"respect_gitignore,omitempty"`
+
+	// Insecure skips TLS verification for custom inference endpoints.
+	Insecure bool `json:"insecure,omitempty"`
 
 	// LastChangelogShown is the version whose release-notes
 	// dialog the user has already seen. When the running binary's
@@ -298,6 +303,12 @@ func ResolveCredentialFull(provider, explicit string) (cred, method, accountID s
 			return v, "apikey", "", nil
 		}
 	}
+	// Generic env var fallback for custom providers: normalize the
+	// provider id to a shell-friendly env var name (hyphens to
+	// underscores) and check {NAME}_API_KEY before auth.json.
+	if v := os.Getenv(normalizeCustomProviderEnvVar(provider) + "_API_KEY"); v != "" {
+		return v, "apikey", "", nil
+	}
 	c, err := AuthStoreFor().Load()
 	if err != nil {
 		return "", "", "", err
@@ -377,6 +388,15 @@ func SetKimiCLIFallbackDisabled(disabled bool) error {
 		return err
 	}
 	return os.WriteFile(path, []byte("disabled\n"), 0o600)
+}
+
+// normalizeCustomProviderEnvVar converts a provider id such as
+// "my-company" to "MY_COMPANY", matching the common convention for
+// shell environment variables.
+func normalizeCustomProviderEnvVar(provider string) string {
+	provider = strings.ToUpper(provider)
+	provider = strings.ReplaceAll(provider, "-", "_")
+	return provider
 }
 
 func loadKimiCodeCLIToken() *auth.OAuthToken {

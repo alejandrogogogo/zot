@@ -196,15 +196,48 @@ Other API-key providers are stored under `additional_api_key_creds`. Prefer
 
 Use `$ZOT_HOME/models.json` for private models, deployment aliases, local
 servers, or OpenAI-compatible gateways that are not in the built-in catalog.
-User entries override built-in entries with the same provider and model ID.
+User entries override built-in entries with the same provider and model ID, and
+adding a `models.json` no longer hides the built-in catalog: your entries are
+merged on top of the baked-in and live-discovered models.
+
+A top-level provider key that is not a built-in id defines a custom provider.
+Give it a provider-level `baseUrl` and an `api` wire format (`openai` for
+OpenAI-compatible chat completions, the default, or `anthropic` for the
+Anthropic messages API). A model-level `baseUrl` overrides the provider-level
+one for that model, and an unknown `api` value falls back to `openai` with a
+warning.
+
+```json
+{
+  "providers": {
+    "my-company": {
+      "baseUrl": "https://llm.mycompany.com/v1",
+      "api": "openai",
+      "models": [
+        { "id": "company-llm-v2", "name": "Company LLM v2" }
+      ]
+    }
+  }
+}
+```
+
+Custom providers are first-class: they appear in `--list-models`, `/model`, and
+`/login`. `models.json` never stores secrets. Supply the key through `/login`,
+`--api-key`, or a derived environment variable in upper snake case, so
+`my-company` reads `MY_COMPANY_API_KEY`. Because many self-hosted gateways do
+not expose a model-list endpoint, custom provider keys are accepted and stored
+without a verification probe; an invalid key surfaces on the first model call.
 
 ## Credential resolution
 
 For each request, zot checks credentials in this order:
 
 1. Explicit CLI key, such as `--api-key`.
-2. Provider-specific environment variables.
-3. `$ZOT_HOME/auth.json`.
-4. Custom provider credentials from `$ZOT_HOME/models.json`, when configured.
+2. Provider-specific environment variables (including derived custom-provider
+   variables such as `MY_COMPANY_API_KEY`).
+3. `$ZOT_HOME/auth.json`, including custom provider keys saved by `/login`.
+
+`models.json` itself never stores credentials; it only describes models and
+their endpoints.
 
 Bedrock then uses the AWS SDK credential chain for the actual request.
