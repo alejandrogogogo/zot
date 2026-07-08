@@ -30,6 +30,25 @@ func TestReaderParsesModifyOtherKeysCtrlC(t *testing.T) {
 	}
 }
 
+func TestReaderParsesCSIUEsc(t *testing.T) {
+	k := readKey(t, "\x1b[27u")
+	if k.Kind != KeyEsc {
+		t.Fatalf("Read kind=%v, want esc", k.Kind)
+	}
+}
+
+func TestReaderParsesCSIUTabAndBackspace(t *testing.T) {
+	if k := readKey(t, "\x1b[9u"); k.Kind != KeyTab {
+		t.Fatalf("Read kind=%v, want tab", k.Kind)
+	}
+	if k := readKey(t, "\x1b[9;2u"); k.Kind != KeyShiftTab {
+		t.Fatalf("Read kind=%v, want shift-tab", k.Kind)
+	}
+	if k := readKey(t, "\x1b[127u"); k.Kind != KeyBackspace {
+		t.Fatalf("Read kind=%v, want backspace", k.Kind)
+	}
+}
+
 func TestReaderParsesSGRMouseWheel(t *testing.T) {
 	cases := []struct {
 		seq  string
