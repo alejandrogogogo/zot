@@ -99,8 +99,8 @@ func (d *skillsDialog) Render(th tui.Theme, width int) []string {
 
 	out := []string{frameHeader(th, "skills (enter to view, esc to close)", width)}
 	if len(d.skills) == 0 {
-		out = append(out, "  "+th.FG256(th.Muted, "no skills found"))
-		out = append(out, "  "+th.FG256(th.Muted, "see docs/skills.md to add some"))
+		out = append(out, "  "+th.FG256(th.Muted, "no user skills loaded"))
+		out = append(out, "  "+th.FG256(th.Muted, "add SKILL.md under $ZOT_HOME/skills, .zot/skills, .claude/skills, or .agents/skills"))
 		out = append(out, frameRule(th, width))
 		return out
 	}

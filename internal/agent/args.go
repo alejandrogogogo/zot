@@ -66,12 +66,10 @@ type Args struct {
 	// extra context biasing the model.
 	NoSkill bool
 
-	// WithSkills opts into loading user-installed skills from
+	// WithSkills controls loading user-installed skills from
 	// $ZOT_HOME/skills/, .zot/skills/, .claude/skills/, and
-	// .agents/skills/. Without this flag only the built-in skills
-	// shipped with the zot binary are available, so a fresh install
-	// has a deterministic skill set regardless of what's lying
-	// around in the user's home directory.
+	// .agents/skills/. It defaults to true; --no-skill disables all
+	// skill discovery, including built-ins.
 	WithSkills bool
 
 	// NoYolo turns on per-tool confirmation. Before each tool
@@ -101,7 +99,7 @@ type Args struct {
 
 // ParseArgs parses the process arguments (excluding argv[0]).
 func ParseArgs(in []string) (Args, error) {
-	a := Args{Mode: ModeInteractive, MaxSteps: 0}
+	a := Args{Mode: ModeInteractive, MaxSteps: 0, WithSkills: true}
 	positional := []string{}
 
 	want := func(i *int, flag string) (string, error) {
@@ -188,6 +186,7 @@ func ParseArgs(in []string) (Args, error) {
 		case "--no-skill", "--no-skills":
 			a.NoSkill = true
 		case "--with-skills", "--with-skill":
+			// Deprecated no-op: user skills are loaded by default.
 			a.WithSkills = true
 		case "--no-yolo":
 			a.NoYolo = true
@@ -378,7 +377,6 @@ func PrintHelp(version string) {
 		row{"--no-yolo", "ask before running every tool call"},
 		row{"--no-ext", "skip extension discovery for this run"},
 		row{"--no-skill", "skip all skill discovery for this run"},
-		row{"--with-skills", "load user-installed skills in addition to built-ins"},
 	)
 	section("misc",
 		row{"--max-steps N", "agent loop iteration cap (default: unlimited)"},

@@ -107,7 +107,7 @@ $ZOT_HOME/
 ├── sessions/           # jsonl transcripts, one dir per cwd
 ├── models-cache.json   # live /v1/models discovery cache (6h ttl)
 ├── SYSTEM.md           # optional: replaces the default system prompt
-├── skills/             # optional: user SKILL.md files (opt in with --with-skills)
+├── skills/             # optional: user SKILL.md files
 ├── extensions/         # installed extensions, one dir per extension
 └── logs/               # app log files
 ```
@@ -152,7 +152,6 @@ zot --help
 | `--max-steps <n>` | Cap agent loop iterations (default 50). |
 | `-e`, `--ext <path>` | Load an extension from `<path>` for this run (repeatable; wins against installed extensions of the same name). |
 | `--no-ext` | Skip extension discovery for this run. `--ext` still works on top, so `--no-ext --ext ./x` runs only `x`. |
-| `--with-skills` | Also load user-installed skills. Without this, only the built-in skills shipped in the binary are loaded. |
 | `--no-skill` | Disable all skills, including built-ins. No `skill` tool is registered and the system prompt has no skill manifest. |
 | `--no-yolo` | Confirm every tool call before it runs (interactive TUI only). A dialog shows the tool name and a one-line preview of its args with four choices: yes, yes-always-this-tool-this-session, yes-always-this-session, no. Ignored with a stderr warning in print / json / rpc modes, where tools still run freely so scripts and automation keep working. |
 
@@ -596,7 +595,7 @@ For development, point `zot --ext <path>` at a working directory and skip the in
 
 A skill is a per-folder `SKILL.md` file with a YAML frontmatter header. zot discovers skills at startup, surfaces their names in the system prompt, and exposes a built-in `skill` tool the model uses to load the body on demand.
 
-By default only the built-in skills shipped with the zot binary are loaded. Pass `--with-skills` to also load user-installed skills from:
+By default zot loads built-in skills plus user-installed skills from:
 
 - `./.zot/skills/<name>/SKILL.md` (project)
 - `$ZOT_HOME/skills/<name>/SKILL.md` (global)
