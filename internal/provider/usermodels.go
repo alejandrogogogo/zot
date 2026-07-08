@@ -2,6 +2,7 @@ package provider
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 )
 
@@ -59,17 +60,34 @@ type UserModel struct {
 // (missing file, bad JSON, etc.) so the caller can treat it as
 // optional without error handling.
 func LoadUserModels(path string) []Model {
+	models, _ := LoadUserModelsWithWarnings(path)
+	return models
+}
+
+// LoadUserModelsWithWarnings is like LoadUserModels but also returns
+// human-readable warnings about every recoverable issue it found in
+// the file (unknown provider id, empty model id, malformed JSON for a
+// single provider block, etc.). The caller is responsible for
+// surfacing the warnings; the file is never rejected wholesale unless
+// the top-level JSON itself fails to parse.
+func LoadUserModelsWithWarnings(path string) ([]Model, []string) {
+	var warnings []string
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var file UserModelsFile
 	if err := json.Unmarshal(data, &file); err != nil {
-		return nil
+		warnings = append(warnings, fmt.Sprintf("models.json: parse error: %v (file ignored)", err))
+		return nil, warnings
 	}
 
 	var out []Model
 	for providerName, prov := range file.Providers {
+		if providerName == "" {
+			warnings = append(warnings, "models.json: empty provider key skipped")
+			continue
+		}
 		// Normalize legacy transport aliases to their provider names.
 		normalized := providerName
 		switch providerName {
@@ -83,7 +101,20 @@ func LoadUserModels(path string) []Model {
 			normalized = "deepseek"
 		}
 
-		for _, um := range prov.Models {
+		for i, um := range prov.Models {
+			if um.ID == "" {
+				warnings = append(warnings, fmt.Sprintf("models.json: provider %q entry #%d has empty id; skipped", providerName, i))
+				continue
+			}
+			if um.ContextWindow < 0 || um.MaxTokens < 0 {
+				warnings = append(warnings, fmt.Sprintf("models.json: %s/%s has negative contextWindow/maxTokens; clamped to 0", normalized, um.ID))
+				if um.ContextWindow < 0 {
+					um.ContextWindow = 0
+				}
+				if um.MaxTokens < 0 {
+					um.MaxTokens = 0
+				}
+			}
 			m := Model{
 				Provider:        normalized,
 				ID:              um.ID,
@@ -104,7 +135,7 @@ func LoadUserModels(path string) []Model {
 			out = append(out, m)
 		}
 	}
-	return out
+	return out, warnings
 }
 
 // SetUserModels merges user-defined models into the active catalog.

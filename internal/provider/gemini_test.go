@@ -2,10 +2,12 @@ package provider
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -63,6 +65,51 @@ func TestGeminiStreamHappyPath(t *testing.T) {
 	}
 	if usage.InputTokens != 12 || usage.OutputTokens != 2 {
 		t.Fatalf("usage=%+v", usage)
+	}
+}
+
+func TestGeminiStreamInlineImage(t *testing.T) {
+	t.Chdir(t.TempDir())
+	img := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: " + `{"candidates":[{"content":{"role":"model","parts":[{"text":"here"},{"inlineData":{"mimeType":"image/png","data":"` + img + `"}}]},"finishReason":"STOP"}]}` + "\n\n"))
+	}))
+	defer srv.Close()
+
+	c := NewGemini("k", srv.URL)
+	evs, err := c.Stream(context.Background(), Request{Model: "gemini-2.5-flash-image"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var done EventDone
+	for ev := range evs {
+		if e, ok := ev.(EventDone); ok {
+			done = e
+		}
+	}
+	if len(done.Message.Content) != 3 {
+		t.Fatalf("content count=%d: %+v", len(done.Message.Content), done.Message.Content)
+	}
+	if tb, ok := done.Message.Content[0].(TextBlock); !ok || tb.Text != "here" {
+		t.Fatalf("text block=%T %+v", done.Message.Content[0], done.Message.Content[0])
+	}
+	ib, ok := done.Message.Content[1].(ImageBlock)
+	if !ok {
+		t.Fatalf("want image block, got %T", done.Message.Content[1])
+	}
+	if ib.MimeType != "image/png" || string(ib.Data) != "png-bytes" {
+		t.Fatalf("image=%q %q", ib.MimeType, string(ib.Data))
+	}
+	saved, ok := done.Message.Content[2].(TextBlock)
+	if !ok || !strings.Contains(saved.Text, "zot-gemini-image-") || !strings.Contains(saved.Text, ".png") {
+		t.Fatalf("saved path block=%T %+v", done.Message.Content[2], done.Message.Content[2])
+	}
+	path := strings.TrimPrefix(saved.Text, "Saved image: `")
+	path = strings.TrimSuffix(path, "`")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("saved image missing at %q: %v", path, err)
 	}
 }
 
@@ -146,6 +193,38 @@ func TestGeminiBuildRequestSystemAndTools(t *testing.T) {
 	}
 	if len(wire.Contents) != 1 || wire.Contents[0].Role != "user" {
 		t.Fatalf("contents: %+v", wire.Contents)
+	}
+}
+
+// TestGeminiBuildRequestImageModelOmitsTools confirms image-generation
+// models receive direct multimodal prompts without function declarations.
+func TestGeminiBuildRequestImageModelOmitsTools(t *testing.T) {
+	c := NewGemini("k", "https://example.invalid").(*geminiClient)
+	wire, _, err := c.buildRequest(Request{
+		Model: "gemini-2.5-flash-image",
+		Tools: []Tool{
+			{Name: "read", Description: "read a file", Schema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`)},
+		},
+		Messages: []Message{
+			{Role: RoleUser, Content: []Content{TextBlock{Text: "edit this image"}, ImageBlock{MimeType: "image/png", Data: []byte("png")}}},
+			{Role: RoleAssistant, Content: []Content{TextBlock{Text: "checking"}, ToolCallBlock{ID: "1", Name: "read", Arguments: json.RawMessage(`{"path":"x"}`)}}},
+			{Role: RoleTool, Content: []Content{ToolResultBlock{CallID: "1", Content: []Content{TextBlock{Text: "tool output"}}}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wire.Tools) != 0 {
+		t.Fatalf("image model should omit tools, got %+v", wire.Tools)
+	}
+	if len(wire.Contents) != 2 {
+		t.Fatalf("contents count=%d: %+v", len(wire.Contents), wire.Contents)
+	}
+	if len(wire.Contents[0].Parts) != 2 || wire.Contents[0].Parts[1].InlineData == nil {
+		t.Fatalf("user image parts not preserved: %+v", wire.Contents[0].Parts)
+	}
+	if len(wire.Contents[1].Parts) != 1 || wire.Contents[1].Parts[0].FunctionCall != nil {
+		t.Fatalf("assistant tool call not stripped: %+v", wire.Contents[1].Parts)
 	}
 }
 

@@ -208,6 +208,13 @@ func Run(rawArgs []string, version string) error {
 	LoadCachedModels()
 	LoadUserModels()
 
+	// Repair config.json so a stale (provider, model) pair from an
+	// interrupted /model switch can't strand the user with an
+	// "unknown model" error on the first turn. Runs before any UI
+	// renders so the status bar shows the post-repair pair, not the
+	// broken one. Silent on success.
+	ValidateAndRepairConfig()
+
 	if args.ListModels {
 		printModels()
 		return nil
@@ -660,8 +667,9 @@ func runInteractive(ctx context.Context, args Args, version string) error {
 		}
 		sess = newSess
 		currentAg.SetMessages(msgs)
-		if usage, uerr := core.SessionUsage(path); uerr == nil {
-			currentAg.SeedCost(usage)
+		if cum, last, uerr := core.SessionUsageDetail(path); uerr == nil {
+			currentAg.SeedCost(cum)
+			currentAg.SeedLastTurnUsage(last)
 		}
 		// The live agent only receives a compact resume window, but
 		// the session file remains intact. Keep the persistence
@@ -1094,8 +1102,9 @@ func openOrCreateSession(args Args, r Resolved, ag *core.Agent, version string) 
 	}
 	if s != nil {
 		ag.SetMessages(msgs)
-		if usage, uerr := core.SessionUsage(s.Path); uerr == nil {
-			ag.SeedCost(usage)
+		if cum, last, uerr := core.SessionUsageDetail(s.Path); uerr == nil {
+			ag.SeedCost(cum)
+			ag.SeedLastTurnUsage(last)
 		}
 		return s, nil
 	}
@@ -1159,8 +1168,41 @@ func readAllStdin() (string, error) {
 }
 
 func printModels() {
-	fmt.Println("provider   model id                       context  max-out  reasoning  source        name")
-	for _, m := range provider.Active() {
+	models := provider.Active()
+
+	// Compute column widths from actual data so wide providers (e.g.
+	// xiaomi-token-plan-sgp) and long bedrock model ids don't force the
+	// `name` column off-screen. Floors mirror the historical layout so
+	// short catalogs look the same as before.
+	provW, idW, srcW := len("provider"), len("model id"), len("source")
+	for _, m := range models {
+		if w := len(m.Provider); w > provW {
+			provW = w
+		}
+		if w := len(m.ID); w > idW {
+			idW = w
+		}
+		source := m.Source
+		if source == "" {
+			source = "catalog"
+		}
+		if m.Speculative {
+			source = "speculative"
+		}
+		if w := len(source); w > srcW {
+			srcW = w
+		}
+	}
+
+	header := fmt.Sprintf("%-*s  %-*s  %8s  %8s  %s  %-*s  %s",
+		provW, "provider",
+		idW, "model id",
+		"context", "max-out", "reasoning",
+		srcW, "source",
+		"name")
+	fmt.Println(header)
+
+	for _, m := range models {
 		reason := " "
 		if m.Reasoning {
 			reason = "✓"
@@ -1172,7 +1214,12 @@ func printModels() {
 		if m.Speculative {
 			source = "speculative"
 		}
-		fmt.Printf("%-10s %-30s %8d %8d     %s        %-11s   %s\n",
-			m.Provider, m.ID, m.ContextWindow, m.MaxOutput, reason, source, m.DisplayName)
+		fmt.Printf("%-*s  %-*s  %8d  %8d     %s      %-*s  %s\n",
+			provW, m.Provider,
+			idW, m.ID,
+			m.ContextWindow, m.MaxOutput,
+			reason,
+			srcW, source,
+			m.DisplayName)
 	}
 }

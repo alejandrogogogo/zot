@@ -78,6 +78,40 @@ func TestOpenAIErrorStatus(t *testing.T) {
 	}
 }
 
+func TestAnthropicBuildRequestStripsAssistantImages(t *testing.T) {
+	c := NewAnthropic("x", "").(*anthropicClient)
+	wire, err := c.buildRequest(Request{
+		Model: "claude-sonnet-4-5",
+		Messages: []Message{
+			{Role: RoleUser, Content: []Content{TextBlock{Text: "make an image"}}},
+			{Role: RoleAssistant, Content: []Content{
+				TextBlock{Text: "done"},
+				ImageBlock{MimeType: "image/png", Data: []byte("png")},
+				TextBlock{Text: "Saved image: `zot-gemini-image-x.png`"},
+			}},
+			{Role: RoleUser, Content: []Content{TextBlock{Text: "hello"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wire.Messages) != 3 {
+		t.Fatalf("messages=%d", len(wire.Messages))
+	}
+	assistant := wire.Messages[1]
+	if assistant.Role != "assistant" {
+		t.Fatalf("role=%q", assistant.Role)
+	}
+	if len(assistant.Content) != 2 {
+		t.Fatalf("assistant content=%+v", assistant.Content)
+	}
+	for _, b := range assistant.Content {
+		if _, ok := b.(anthImageBlock); ok {
+			t.Fatalf("assistant image block was not stripped: %+v", assistant.Content)
+		}
+	}
+}
+
 func TestAnthropicStreamHappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "text/event-stream")

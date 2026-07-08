@@ -236,6 +236,24 @@ func (a *Agent) SeedCost(u provider.Usage) {
 	a.cost.Total = u
 }
 
+// LastTurnUsage returns the per-turn usage of the most recent
+// completed turn. Drives the "context used" gauge in the status bar
+// without waiting for the next turn to land.
+func (a *Agent) LastTurnUsage() provider.Usage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.cost.LastTurn
+}
+
+// SeedLastTurnUsage primes the per-turn snapshot. Used on resume so
+// the gauge reflects the prompt size of the last turn in the session
+// file instead of starting at zero.
+func (a *Agent) SeedLastTurnUsage(u provider.Usage) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cost.LastTurn = u
+}
+
 // fireMessageAppended invokes OnMessageAppended without holding the
 // agent mutex, so the host's persistence callback can take its own
 // locks without deadlocking the agent loop. Tolerates a nil hook so
