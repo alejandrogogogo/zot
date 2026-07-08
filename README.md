@@ -17,6 +17,7 @@ Yet another coding agent harness, lightweight and written (vibe-slopped) in go.
 - three run modes (interactive tui, print, json).
 - built-in telegram bot.
 - extensions in any language via subprocess + json-rpc. None installed by default; opt in with `zot ext install` or `zot --ext`. See [docs/extensions.md](docs/extensions.md).
+- user and extension themes via JSON; see [docs/themes.md](docs/themes.md).
 - reusable instructions via `SKILL.md` files; see [docs/skills.md](docs/skills.md).
 - no community atm.
 
@@ -108,6 +109,7 @@ $ZOT_HOME/
 ├── models-cache.json   # live /v1/models discovery cache (6h ttl)
 ├── SYSTEM.md           # optional: replaces the default system prompt
 ├── skills/             # optional: user SKILL.md files
+├── themes/             # optional: user theme JSON files
 ├── extensions/         # installed extensions, one dir per extension
 └── logs/               # app log files
 ```
@@ -295,6 +297,7 @@ Opens a dialog with every persistent setting. `up`/`down` to navigate, `enter` o
 - **render images when supported** — draw screenshots / `read`-returned images inline using the terminal's image protocol, or fall back to a text placeholder. Auto-detected from `TERM_PROGRAM`; the toggle overrides the detection. The row is greyed out and forced off on terminals that don't speak any image protocol.
 - **auto-swarm** — let the main agent spawn background sub-agents in parallel via a built-in `swarm_spawn` tool. Off by default. When on, the tool is registered with the running agent, the system prompt gains a short addendum telling the model to delegate independent sub-tasks proactively, and zot watches every sub-agent the main agent spawns. As soon as the last sub-agent in a batch finishes its initial task, an `[auto-swarm update]` message is injected back into the chat with each agent's status / task / transcript tail, so the main agent can summarise the collective outcome. Flipping off mid-session removes the tool from the live agent and strips the addendum on the next turn — the model stops trying to delegate. See `/swarm` for the dashboard that lets you monitor, message, kill, or remove the spawned agents.
 - **thinking level** — choose reasoning for supported models: off (default; no reasoning), minimum (~1k tokens), low (~2k), medium (~8k), high (~16k), maximum (~32k). The change is persisted to `config.json` and applied to the running agent's next model call.
+- **color theme** — choose the built-in auto/dark/light theme or any JSON theme discovered under `$ZOT_HOME/themes` or a loaded extension. Theme files can override any subset of UI colors, syntax colors, and spinner frames/messages. Changes apply immediately; if a selected theme file is deleted, zot resets to auto. See [docs/themes.md](docs/themes.md).
 
 ### `/skills`
 
@@ -607,6 +610,10 @@ For development, point `zot --ext <path>` at a working directory and skip the in
 - For the rest, zot stashes any dirty worktree state (including untracked runtime files like `todos.json` or `config.json`), runs `git pull --ff-only`, and pops the stash. If the pop produces conflicts, the conflict markers are left in place and you'll see a warning.
 - Diverged branches, offline pulls, or any other git failure are reported as `failed` and the next extension is processed. `zot update` itself never aborts because of an extension.
 - zot does **not** run any build step (`go build`, `npm install`, `make`) after the pull. Extension authors are expected to commit the runnable artifact (binary, transpiled JS, etc.). If you need a build, rebuild manually and use `/reload-ext`.
+
+### Theme-only extensions
+
+An extension may ship only a theme: `extension.json` plus `theme.json` (or `themes/theme.json`) and no executable. zot loads it without spawning a subprocess and shows it in `/settings` with source information. See [docs/themes.md](docs/themes.md).
 
 ### Reference
 

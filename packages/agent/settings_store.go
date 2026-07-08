@@ -31,6 +31,18 @@ func (configSettingsStore) SetReasoning(level string) error {
 	return SaveConfig(cfg)
 }
 
+func (configSettingsStore) SetTheme(name string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	if name == "auto" {
+		name = ""
+	}
+	cfg.Theme = name
+	return SaveConfig(cfg)
+}
+
 // AutoSwarmEnabled reads the current auto-swarm flag from config.
 // Used by the swarm_spawn tool at call time to gate execution.
 func AutoSwarmEnabled() bool {

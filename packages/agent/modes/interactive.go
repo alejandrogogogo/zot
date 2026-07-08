@@ -45,6 +45,11 @@ type InteractiveConfig struct {
 	// re-reading config.json on every open.
 	AutoSwarmEnabled *bool
 
+	// ThemeName mirrors the persisted config theme value. Empty means auto.
+	ThemeName string
+	// ExtensionThemes returns themes bundled with loaded extensions.
+	ExtensionThemes func() []tui.ThemeOption
+
 	// AutoSwarmSystemAddendum is the system-prompt block that gets
 	// appended/stripped when the user toggles auto-swarm at runtime.
 	// Plumbed in from the cli so this package doesn't have to import
@@ -222,6 +227,7 @@ type SettingsStore interface {
 	SetInlineImages(enabled bool) error
 	SetAutoSwarm(enabled bool) error
 	SetReasoning(level string) error
+	SetTheme(name string) error
 }
 
 type Interactive struct {
@@ -440,7 +446,7 @@ func NewInteractive(cfg InteractiveConfig) *Interactive {
 		extPanel:          newExtPanelDialog(),
 		suggest:           newSlashSuggester(),
 		fileSuggest:       newFileSuggester(),
-		spin:              newSpinner(),
+		spin:              newSpinner(cfg.Theme),
 		inputHistoryIndex: -1,
 	}
 	if cfg.Agent != nil {
@@ -2526,6 +2532,31 @@ func (i *Interactive) openSettingsDialog() {
 		reasoningHint = "current model does not support thinking"
 	}
 
+	themeName := i.cfg.ThemeName
+	if themeName == "" {
+		themeName = "auto"
+	}
+	if themeName != "auto" && !tui.ThemeExists(i.cfg.ZotHome, themeName) {
+		themeName = "auto"
+		i.cfg.ThemeName = ""
+		if i.cfg.SettingsStore != nil {
+			_ = i.cfg.SettingsStore.SetTheme("auto")
+		}
+		i.applyThemeNow("auto")
+	}
+	themeOptions := []settingsOption{}
+	themeChoice := 0
+	availableThemes := tui.AvailableThemes(i.cfg.ZotHome)
+	if i.cfg.ExtensionThemes != nil {
+		availableThemes = append(availableThemes, i.cfg.ExtensionThemes()...)
+	}
+	for idx, opt := range availableThemes {
+		themeOptions = append(themeOptions, settingsOption{value: opt.Value, label: opt.Label, desc: opt.Description})
+		if opt.Value == themeName {
+			themeChoice = idx
+		}
+	}
+
 	i.settingsDialog.Open([]settingsItem{
 		{
 			key:      "inline_images_enabled",
@@ -2551,15 +2582,25 @@ func (i *Interactive) openSettingsDialog() {
 			choice:  reasoningChoice,
 			hint:    reasoningHint,
 		},
+		{
+			key:     "theme",
+			label:   "color theme",
+			desc:    "choose a theme from $ZOT_HOME/themes or a loaded extension",
+			options: themeOptions,
+			choice:  themeChoice,
+		},
 	})
 }
 
 func (i *Interactive) applySettingChange(act settingsAction) {
-	if act.Key == "reasoning" {
+	switch act.Key {
+	case "reasoning":
 		i.applyReasoningSetting(act.StringValue)
-		return
+	case "theme":
+		i.applyThemeSetting(act.StringValue)
+	default:
+		i.applySettingToggle(act.Key, act.Value)
 	}
-	i.applySettingToggle(act.Key, act.Value)
 }
 
 func (i *Interactive) applySettingToggle(key string, value bool) {
@@ -2616,6 +2657,61 @@ func (i *Interactive) applySettingToggle(key string, value bool) {
 		i.statusErr = ""
 		i.mu.Unlock()
 	}
+}
+
+func (i *Interactive) applyThemeSetting(name string) {
+	if i.cfg.SettingsStore != nil {
+		if err := i.cfg.SettingsStore.SetTheme(name); err != nil {
+			i.mu.Lock()
+			i.statusErr = "settings: " + err.Error()
+			i.mu.Unlock()
+			return
+		}
+	}
+	i.cfg.ThemeName = name
+	if name == "auto" {
+		i.cfg.ThemeName = ""
+	}
+	i.applyThemeNow(name)
+}
+
+func (i *Interactive) applyThemeNow(name string) {
+	if name == "" {
+		name = "auto"
+	}
+	detected := tui.Dark
+	if tui.IsLightTheme(i.cfg.Theme) {
+		detected = tui.Light
+	}
+	th, applied, err := tui.LoadThemeFromHome(i.cfg.ZotHome, name, detected)
+	if err != nil {
+		if i.cfg.SettingsStore != nil {
+			_ = i.cfg.SettingsStore.SetTheme("auto")
+		}
+		i.cfg.ThemeName = ""
+		th, applied, _ = tui.LoadThemeFromHome(i.cfg.ZotHome, "auto", detected)
+		i.mu.Lock()
+		i.statusErr = "theme missing; reset to default"
+		i.mu.Unlock()
+	} else {
+		i.mu.Lock()
+		label := applied
+		if label == "" {
+			label = "auto"
+		}
+		i.statusOK = "theme " + label
+		i.statusErr = ""
+		i.mu.Unlock()
+	}
+	i.cfg.Theme = th
+	i.view.Theme = th
+	i.view.InvalidateRenderCache()
+	i.ed.Prompt = th.AccentBar(th.Accent)
+	i.spin.Configure(th)
+	if i.rend != nil {
+		i.rend.Clear()
+	}
+	i.invalidate()
 }
 
 func (i *Interactive) applyReasoningSetting(level string) {

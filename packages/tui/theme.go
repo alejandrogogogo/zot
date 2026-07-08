@@ -50,40 +50,143 @@ type Theme struct {
 	Spinner      int // spinner + funny working line
 	SelectionBG  int // background for highlighted rows
 	SelectionFG  int // foreground for highlighted rows
+
+	SpinnerFrames     []string
+	SpinnerMessages   []string
+	SpinnerIntervalMS int
+
+	SyntaxBaseStyle string
+	Syntax          SyntaxTheme
+}
+
+// SyntaxTheme contains the chroma token colors used by code fences,
+// file previews, and diffs. Values are chroma style entries, so they
+// may include attributes after the color (for example "#81a1c1 bold").
+type SyntaxTheme struct {
+	Keyword             string
+	KeywordConstant     string
+	KeywordDeclaration  string
+	KeywordNamespace    string
+	KeywordReserved     string
+	KeywordType         string
+	NameBuiltin         string
+	NameFunction        string
+	NameClass           string
+	NameDecorator       string
+	LiteralString       string
+	LiteralStringEscape string
+	LiteralNumber       string
+	Comment             string
+	CommentPreproc      string
+	Operator            string
+	Punctuation         string
+	Text                string
+}
+
+var nordSyntax = SyntaxTheme{
+	Keyword:             "#81a1c1 bold",
+	KeywordConstant:     "#81a1c1",
+	KeywordDeclaration:  "#81a1c1",
+	KeywordNamespace:    "#81a1c1",
+	KeywordReserved:     "#81a1c1 bold",
+	KeywordType:         "#88c0d0",
+	NameBuiltin:         "#88c0d0",
+	NameFunction:        "#8fbcbb",
+	NameClass:           "#a3be8c bold",
+	NameDecorator:       "#b48ead",
+	LiteralString:       "#a3be8c",
+	LiteralStringEscape: "#bf616a",
+	LiteralNumber:       "#d08770",
+	Comment:             "#616e88 italic",
+	CommentPreproc:      "#b48ead",
+	Operator:            "#eceff4",
+	Punctuation:         "#d8dee9",
+	Text:                "#e5e9f0",
+}
+
+var defaultSpinnerFrames = []string{
+	"⠋",
+	"⠙",
+	"⠚",
+	"⠞",
+	"⠖",
+	"⠦",
+	"⠴",
+	"⠲",
+	"⠳",
+	"⠓",
+}
+
+var defaultSpinnerMessages = []string{
+	"thinking",
+	"reticulating splines",
+	"bribing the tokenizer",
+	"asking the rubber duck",
+	"summoning daemons",
+	"consulting the oracle",
+	"herding tokens",
+	"compiling excuses",
+	"poking the model",
+	"negotiating with rate limits",
+	"picking a fight with syntax",
+	"reading between the bits",
+	"tasting the semicolons",
+	"pretending to understand the code",
+	"petting the cache",
+	"drafting clever replies",
+	"warming up the GPU choir",
+	"arguing with a stack trace",
+	"googling the answer (not really)",
+	"rewriting history",
+	"every draft is a stone in the work",
+	"bringing order to the unhewn",
+	"finding the load-bearing measure",
+	"where clarity grows, work grows lighter",
+	"every correction serves the work",
 }
 
 var Dark = Theme{
-	FG:           253,
-	Muted:        244,
-	Accent:       111,                  // soft blue
-	User:         180,                  // warm tan (unused now that the speaker label is gone, kept for skin compat)
-	UserBubbleBG: ColorRGB(66, 69, 75), // #42454B
-	UserBubbleFG: 248,                  // slightly lighter grey for readability on #42454B
-	Assistant:    117,                  // bright cyan — the zot label color
-	Tool:         114,                  // green
-	ToolOut:      245,
-	Error:        203,
-	Warning:      214,
-	Spinner:      183, // soft purple
-	SelectionBG:  24,  // deep blue background
-	SelectionFG:  231, // near-white foreground
+	FG:                253,
+	Muted:             244,
+	Accent:            111,                  // soft blue
+	User:              180,                  // warm tan (unused now that the speaker label is gone, kept for skin compat)
+	UserBubbleBG:      ColorRGB(66, 69, 75), // #42454B
+	UserBubbleFG:      248,                  // slightly lighter grey for readability on #42454B
+	Assistant:         117,                  // bright cyan — the zot label color
+	Tool:              114,                  // green
+	ToolOut:           245,
+	Error:             203,
+	Warning:           214,
+	Spinner:           183, // soft purple
+	SelectionBG:       24,  // deep blue background
+	SelectionFG:       231, // near-white foreground
+	SpinnerFrames:     defaultSpinnerFrames,
+	SpinnerMessages:   defaultSpinnerMessages,
+	SpinnerIntervalMS: 80,
+	SyntaxBaseStyle:   "monokai",
+	Syntax:            nordSyntax,
 }
 
 var Light = Theme{
-	FG:           236,
-	Muted:        244,
-	Accent:       33,
-	User:         94,
-	UserBubbleBG: Color256(254), // very pale grey panel behind user rows on light theme
-	UserBubbleFG: 240,           // dark grey text, legible on the pale panel
-	Assistant:    31,            // deep cyan
-	Tool:         28,
-	ToolOut:      240,
-	Error:        160,
-	Warning:      166,
-	Spinner:      91,  // purple
-	SelectionBG:  153, // light blue
-	SelectionFG:  232, // near-black
+	FG:                236,
+	Muted:             244,
+	Accent:            33,
+	User:              94,
+	UserBubbleBG:      Color256(254), // very pale grey panel behind user rows on light theme
+	UserBubbleFG:      240,           // dark grey text, legible on the pale panel
+	Assistant:         31,            // deep cyan
+	Tool:              28,
+	ToolOut:           240,
+	Error:             160,
+	Warning:           166,
+	Spinner:           91,  // purple
+	SelectionBG:       153, // light blue
+	SelectionFG:       232, // near-black
+	SpinnerFrames:     defaultSpinnerFrames,
+	SpinnerMessages:   defaultSpinnerMessages,
+	SpinnerIntervalMS: 80,
+	SyntaxBaseStyle:   "monokai",
+	Syntax:            nordSyntax,
 }
 
 // FG256 wraps s in foreground color c using ANSI 256-color SGR.
@@ -118,7 +221,19 @@ func (t Theme) AccentBar(c int) string {
 // background). The caller is responsible for padding s to the desired
 // width; styling alone does not extend the background past content.
 func (t Theme) Highlight(s string) string {
-	return sgrFG(t.SelectionFG) + sgrBG(t.SelectionBG) + s + reset
+	return t.SelectionStyle() + s + reset
+}
+
+// SelectionStyle returns the SGR prefix for the theme's selected row.
+func (t Theme) SelectionStyle() string {
+	return sgrFG(t.SelectionFG) + sgrBG(t.SelectionBG)
+}
+
+// SelectionStyleFG returns the SGR prefix for selected-row text with
+// a custom foreground. Useful for preserving semantic marks inside a
+// highlighted row without hardcoding escape sequences outside theme.go.
+func (t Theme) SelectionStyleFG(fg int) string {
+	return sgrFG(fg) + sgrBG(t.SelectionBG)
 }
 
 // PadHighlight styles s and extends the selection background to the
@@ -129,7 +244,7 @@ func (t Theme) PadHighlight(s string, width int) string {
 	if visible < width {
 		s += strings.Repeat(" ", width-visible)
 	}
-	return sgrFG(t.SelectionFG) + sgrBG(t.SelectionBG) + s + reset
+	return t.SelectionStyle() + s + reset
 }
 
 // UserBubble paints a single user message row with the bubble

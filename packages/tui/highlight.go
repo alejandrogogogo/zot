@@ -21,16 +21,22 @@ import (
 // builder (which runs on every redraw) don't re-tokenise. Cache is
 // bounded and evicts oldest entries past its cap.
 func HighlightCode(src, lang string) []string {
-	if out, ok := highlightCache.lookup(lang, src); ok {
+	return Dark.HighlightCode(src, lang)
+}
+
+// HighlightCode syntax-colors src using this theme's syntax palette.
+func (th Theme) HighlightCode(src, lang string) []string {
+	styleKey := th.syntaxKey()
+	if out, ok := highlightCache.lookup(styleKey, lang, src); ok {
 		return out
 	}
 	lexer := chooseLexer(lang)
 	if lexer == nil {
 		out := strings.Split(src, "\n")
-		highlightCache.store(lang, src, out)
+		highlightCache.store(styleKey, lang, src, out)
 		return out
 	}
-	style := zotChromaStyle
+	style := th.chromaStyle()
 	formatter := formatters.Get("terminal256")
 	if formatter == nil {
 		return strings.Split(src, "\n")
@@ -39,17 +45,17 @@ func HighlightCode(src, lang string) []string {
 	iterator, err := lexer.Tokenise(nil, src)
 	if err != nil {
 		out := strings.Split(src, "\n")
-		highlightCache.store(lang, src, out)
+		highlightCache.store(styleKey, lang, src, out)
 		return out
 	}
 	var buf bytes.Buffer
 	if err := formatter.Format(&buf, style, iterator); err != nil {
 		out := strings.Split(src, "\n")
-		highlightCache.store(lang, src, out)
+		highlightCache.store(styleKey, lang, src, out)
 		return out
 	}
 	out := strings.Split(strings.TrimRight(stripANSIBackgrounds(buf.String()), "\n"), "\n")
-	highlightCache.store(lang, src, out)
+	highlightCache.store(styleKey, lang, src, out)
 	return out
 }
 
@@ -64,24 +70,24 @@ type highlightResultCache struct {
 	order []string
 }
 
-func (c *highlightResultCache) key(lang, src string) string {
-	return lang + "\x00" + src
+func (c *highlightResultCache) key(styleKey, lang, src string) string {
+	return styleKey + "\x00" + lang + "\x00" + src
 }
 
-func (c *highlightResultCache) lookup(lang, src string) ([]string, bool) {
+func (c *highlightResultCache) lookup(styleKey, lang, src string) ([]string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	v, ok := c.data[c.key(lang, src)]
+	v, ok := c.data[c.key(styleKey, lang, src)]
 	return v, ok
 }
 
-func (c *highlightResultCache) store(lang, src string, out []string) {
+func (c *highlightResultCache) store(styleKey, lang, src string, out []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.data == nil {
 		c.data = make(map[string][]string)
 	}
-	k := c.key(lang, src)
+	k := c.key(styleKey, lang, src)
 	if _, ok := c.data[k]; !ok {
 		c.order = append(c.order, k)
 	}
@@ -184,46 +190,43 @@ func chooseLexer(lang string) chroma.Lexer {
 	return nil
 }
 
-// zotChromaStyle is a terminal style tuned for zot's dark palette.
-// Built lazily so the cost is paid once per process.
-var zotChromaStyle = func() *chroma.Style {
-	chromaStyleOnce.Do(func() {
-		chromaStyleCached = buildZotStyle()
-	})
-	return chromaStyleCached
-}()
-
-var (
-	chromaStyleOnce   sync.Once
-	chromaStyleCached *chroma.Style
-)
-
-// buildZotStyle returns a chroma style with colors that match zot's
-// theme: accent blue for keywords, green for strings, muted grey for
-// comments, user-tan for numbers. Falls back to chroma's bundled
-// "fruity" style if the builder fails for any reason.
-func buildZotStyle() *chroma.Style {
-	builder := styles.Get("monokai").Builder()
-	// Override the most visible tokens with explicit colors that
-	// read well on a dark terminal.
-	builder.Add(chroma.Keyword, "#81a1c1 bold")       // imports, funcs, control flow
-	builder.Add(chroma.KeywordConstant, "#81a1c1")    // true, false, null
-	builder.Add(chroma.KeywordDeclaration, "#81a1c1") // const, let, var, type
-	builder.Add(chroma.KeywordNamespace, "#81a1c1")   // import, from, package
-	builder.Add(chroma.KeywordReserved, "#81a1c1 bold")
-	builder.Add(chroma.KeywordType, "#88c0d0") // string, int, bool
-	builder.Add(chroma.NameBuiltin, "#88c0d0")
-	builder.Add(chroma.NameFunction, "#8fbcbb")
-	builder.Add(chroma.NameClass, "#a3be8c bold")
-	builder.Add(chroma.NameDecorator, "#b48ead")
-	builder.Add(chroma.LiteralString, "#a3be8c") // strings
-	builder.Add(chroma.LiteralStringEscape, "#bf616a")
-	builder.Add(chroma.LiteralNumber, "#d08770")
-	builder.Add(chroma.Comment, "#616e88 italic")
-	builder.Add(chroma.CommentPreproc, "#b48ead")
-	builder.Add(chroma.Operator, "#eceff4")
-	builder.Add(chroma.Punctuation, "#d8dee9")
-	builder.Add(chroma.Text, "#e5e9f0")
+// chromaStyle builds a syntax style from the theme. Falls back to
+// chroma's bundled fallback style if the configured base style or
+// overrides cannot be built.
+func (th Theme) chromaStyle() *chroma.Style {
+	base := th.SyntaxBaseStyle
+	if base == "" {
+		base = "monokai"
+	}
+	style := styles.Get(base)
+	if style == nil {
+		style = styles.Fallback
+	}
+	builder := style.Builder()
+	add := func(tt chroma.TokenType, entry string) {
+		if strings.TrimSpace(entry) != "" {
+			builder.Add(tt, entry)
+		}
+	}
+	syn := th.Syntax
+	add(chroma.Keyword, syn.Keyword)
+	add(chroma.KeywordConstant, syn.KeywordConstant)
+	add(chroma.KeywordDeclaration, syn.KeywordDeclaration)
+	add(chroma.KeywordNamespace, syn.KeywordNamespace)
+	add(chroma.KeywordReserved, syn.KeywordReserved)
+	add(chroma.KeywordType, syn.KeywordType)
+	add(chroma.NameBuiltin, syn.NameBuiltin)
+	add(chroma.NameFunction, syn.NameFunction)
+	add(chroma.NameClass, syn.NameClass)
+	add(chroma.NameDecorator, syn.NameDecorator)
+	add(chroma.LiteralString, syn.LiteralString)
+	add(chroma.LiteralStringEscape, syn.LiteralStringEscape)
+	add(chroma.LiteralNumber, syn.LiteralNumber)
+	add(chroma.Comment, syn.Comment)
+	add(chroma.CommentPreproc, syn.CommentPreproc)
+	add(chroma.Operator, syn.Operator)
+	add(chroma.Punctuation, syn.Punctuation)
+	add(chroma.Text, syn.Text)
 	builder.Add(chroma.Background, " bg:")
 
 	s, err := builder.Build()
@@ -231,6 +234,31 @@ func buildZotStyle() *chroma.Style {
 		return styles.Fallback
 	}
 	return s
+}
+
+func (th Theme) syntaxKey() string {
+	syn := th.Syntax
+	return strings.Join([]string{
+		th.SyntaxBaseStyle,
+		syn.Keyword,
+		syn.KeywordConstant,
+		syn.KeywordDeclaration,
+		syn.KeywordNamespace,
+		syn.KeywordReserved,
+		syn.KeywordType,
+		syn.NameBuiltin,
+		syn.NameFunction,
+		syn.NameClass,
+		syn.NameDecorator,
+		syn.LiteralString,
+		syn.LiteralStringEscape,
+		syn.LiteralNumber,
+		syn.Comment,
+		syn.CommentPreproc,
+		syn.Operator,
+		syn.Punctuation,
+		syn.Text,
+	}, "\x1f")
 }
 
 // extLang maps file extensions to chroma lexer names. Only

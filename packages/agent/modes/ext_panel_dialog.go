@@ -1,7 +1,6 @@
 package modes
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/mattn/go-runewidth"
@@ -86,8 +85,8 @@ func styleExtPanelLine(th tui.Theme, raw string, plain string, width int, select
 		if visible := runewidth.StringWidth(plain); visible < width {
 			plain += strings.Repeat(" ", width-visible)
 		}
-		base := fmt.Sprintf("\x1b[38;5;%dm\x1b[48;5;%dm", th.SelectionFG, th.SelectionBG)
-		green := fmt.Sprintf("\x1b[38;5;%dm\x1b[48;5;%dm", th.Tool, th.SelectionBG)
+		base := th.SelectionStyle()
+		green := th.SelectionStyleFG(th.Tool)
 		return base + strings.ReplaceAll(plain, "✓", green+"✓"+base) + "\x1b[0m"
 	}
 	if raw != plain {

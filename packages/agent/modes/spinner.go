@@ -3,6 +3,8 @@ package modes
 import (
 	"math/rand"
 	"time"
+
+	"github.com/patriceckhart/zot/packages/tui"
 )
 
 // spinner drives the busy animation shown in the status bar while a
@@ -11,6 +13,7 @@ import (
 type spinner struct {
 	frames    []string
 	messages  []string
+	interval  time.Duration
 	startedAt time.Time
 	msgIdx    int
 
@@ -20,63 +23,30 @@ type spinner struct {
 	fixedMsg string
 }
 
-// funnyWorkingLines is the rotating text. Kept deliberately short so it
-// fits next to the token counter on narrow terminals. A handful of
-// craftsman-style aphorisms are folded in among the irreverent lines
-// for a bit of contrast — the rotation never feels too uniform.
-var funnyWorkingLines = []string{
-	"thinking",
-	"reticulating splines",
-	"bribing the tokenizer",
-	"asking the rubber duck",
-	"summoning daemons",
-	"consulting the oracle",
-	"herding tokens",
-	"compiling excuses",
-	"poking the model",
-	"negotiating with rate limits",
-	"picking a fight with syntax",
-	"reading between the bits",
-	"tasting the semicolons",
-	"pretending to understand the code",
-	"petting the cache",
-	"drafting clever replies",
-	"warming up the GPU choir",
-	"arguing with a stack trace",
-	"googling the answer (not really)",
-	"rewriting history",
-	"every draft is a stone in the work",
-	"bringing order to the unhewn",
-	"finding the load-bearing measure",
-	"where clarity grows, work grows lighter",
-	"every correction serves the work",
-}
-
-// spinnerFrames is the cli-spinners "dots3" preset — a 10-frame
-// single-cell braille spinner that reads as a small box of dots
-// rotating around its perimeter. Source:
-// https://github.com/sindresorhus/cli-spinners (MIT). Used at the
-// preset's recommended 80ms per step.
-var spinnerFrames = []string{
-	"⠋",
-	"⠙",
-	"⠚",
-	"⠞",
-	"⠖",
-	"⠦",
-	"⠴",
-	"⠲",
-	"⠳",
-	"⠓",
-}
-
 // newSpinner constructs a fresh spinner.
-func newSpinner() *spinner {
-	s := &spinner{
-		frames:   spinnerFrames,
-		messages: funnyWorkingLines,
-	}
+func newSpinner(th tui.Theme) *spinner {
+	s := &spinner{}
+	s.Configure(th)
 	return s
+}
+
+func (s *spinner) Configure(th tui.Theme) {
+	s.frames = append([]string(nil), th.SpinnerFrames...)
+	if len(s.frames) == 0 {
+		s.frames = []string{"⠋", "⠙", "⠚", "⠞", "⠖", "⠦", "⠴", "⠲", "⠳", "⠓"}
+	}
+	s.messages = append([]string(nil), th.SpinnerMessages...)
+	if len(s.messages) == 0 {
+		s.messages = []string{"thinking"}
+	}
+	interval := th.SpinnerIntervalMS
+	if interval <= 0 {
+		interval = 80
+	}
+	s.interval = time.Duration(interval) * time.Millisecond
+	if s.msgIdx >= len(s.messages) {
+		s.msgIdx = 0
+	}
 }
 
 // Start resets the spinner to the beginning of its animation and
@@ -89,6 +59,9 @@ func newSpinner() *spinner {
 // still keeps the set fresh over a session.
 func (s *spinner) Start() {
 	s.startedAt = time.Now()
+	if len(s.messages) == 0 {
+		s.messages = []string{"thinking"}
+	}
 	s.msgIdx = rand.Intn(len(s.messages))
 	s.fixedMsg = ""
 }
@@ -101,14 +74,19 @@ func (s *spinner) StartFixed(msg string) {
 }
 
 // Frame returns the current spinner glyph for the running animation.
-//
-// 80ms per step matches the dots3 preset's recommended interval.
 func (s *spinner) Frame() string {
+	if len(s.frames) == 0 {
+		return ""
+	}
 	if s.startedAt.IsZero() {
 		return s.frames[0]
 	}
+	interval := s.interval
+	if interval <= 0 {
+		interval = 80 * time.Millisecond
+	}
 	elapsed := time.Since(s.startedAt)
-	idx := int(elapsed/(80*time.Millisecond)) % len(s.frames)
+	idx := int(elapsed/interval) % len(s.frames)
 	return s.frames[idx]
 }
 
@@ -119,6 +97,12 @@ func (s *spinner) Frame() string {
 func (s *spinner) Message() string {
 	if s.fixedMsg != "" {
 		return s.fixedMsg
+	}
+	if len(s.messages) == 0 {
+		return "thinking"
+	}
+	if s.msgIdx < 0 || s.msgIdx >= len(s.messages) {
+		s.msgIdx = 0
 	}
 	return s.messages[s.msgIdx]
 }
