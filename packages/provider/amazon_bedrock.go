@@ -194,13 +194,6 @@ type bedrockMessage struct {
 	Content []map[string]interface{} `json:"content"`
 }
 
-// bedrockCachePoint is the Converse API cache checkpoint content block.
-// Appending this to a system or message content array tells Bedrock to
-// create a cache boundary at that position in the prompt prefix.
-var bedrockCachePoint = map[string]interface{}{
-	"cachePoint": map[string]interface{}{"type": "default"},
-}
-
 type bedrockToolSpec struct {
 	ToolSpec struct {
 		Name        string `json:"name"`
@@ -212,8 +205,8 @@ type bedrockToolSpec struct {
 }
 
 type bedrockRequest struct {
-	Messages        []bedrockMessage         `json:"messages"`
-	System          []map[string]interface{} `json:"system,omitempty"`
+	Messages        []bedrockMessage    `json:"messages"`
+	System          []map[string]string `json:"system,omitempty"`
 	InferenceConfig struct {
 		MaxTokens   int      `json:"maxTokens,omitempty"`
 		Temperature *float32 `json:"temperature,omitempty"`
@@ -223,106 +216,17 @@ type bedrockRequest struct {
 	} `json:"toolConfig,omitempty"`
 }
 
-func normalizeBedrockToolResults(msgs []Message) []Message {
-	resultByID := map[string]ToolResultBlock{}
-	for _, m := range msgs {
-		for _, c := range m.Content {
-			if tr, ok := c.(ToolResultBlock); ok {
-				if _, exists := resultByID[tr.CallID]; !exists {
-					resultByID[tr.CallID] = tr
-				}
-			}
-		}
-	}
-
-	out := make([]Message, 0, len(msgs))
-	for _, m := range msgs {
-		copy := m
-		copy.Content = nil
-		var toolCalls []ToolCallBlock
-		for _, c := range m.Content {
-			switch v := c.(type) {
-			case ToolResultBlock:
-				// Bedrock requires toolResult blocks immediately after the
-				// assistant toolUse they answer. Reinsert them from the
-				// assistant pass below instead of preserving their original
-				// location, which may be separated by user text in active
-				// sessions.
-				continue
-			case ToolCallBlock:
-				toolCalls = append(toolCalls, v)
-			}
-			copy.Content = append(copy.Content, c)
-		}
-		if len(copy.Content) > 0 {
-			out = append(out, copy)
-		}
-		if m.Role != RoleAssistant || len(toolCalls) == 0 {
-			continue
-		}
-
-		results := make([]Content, 0, len(toolCalls))
-		for _, tc := range toolCalls {
-			if tr, ok := resultByID[tc.ID]; ok {
-				results = append(results, tr)
-				continue
-			}
-			results = append(results, ToolResultBlock{
-				CallID:  tc.ID,
-				IsError: true,
-				Content: []Content{TextBlock{Text: "tool call did not complete before the next user message"}},
-			})
-		}
-		out = append(out, Message{Role: RoleTool, Content: results, Time: m.Time})
-	}
-	return out
-}
-
-// bedrockModelSupportsCaching reports whether the resolved model ID
-// supports explicit prompt caching via cachePoint markers on Bedrock.
-// We use PriceCacheWrite > 0 as a proxy: every Bedrock-hosted Claude
-// model with a write price in the catalog supports cachePoint markers.
-// Nova models use automatic caching and don't need explicit markers.
-func bedrockModelSupportsCaching(modelID string) bool {
-	// Strip geo prefix (us./eu./apac./au./global.) before catalog lookup.
-	for _, p := range bedrockGeoPrefixes {
-		if strings.HasPrefix(modelID, p+".") {
-			modelID = modelID[len(p)+1:]
-			break
-		}
-	}
-	if m, err := FindModel("amazon-bedrock", modelID); err == nil {
-		return m.PriceCacheWrite > 0
-	}
-	// Unknown model: enable for Anthropic Claude families — cachePoint is
-	// silently ignored by the API if the model doesn't support it.
-	return strings.HasPrefix(modelID, "anthropic.claude-")
-}
-
 func (c *bedrockClient) buildRequest(req Request) (*bedrockRequest, error) {
 	out := &bedrockRequest{}
-
-	// Resolve the model ID as it will appear on the wire so the caching
-	// check operates on the same ID used for FindModel.
-	resolvedModel := resolveBedrockInferenceProfileID(req.Model, c.region)
-	caching := bedrockModelSupportsCaching(resolvedModel)
-
 	if req.System != "" {
-		sysBlock := map[string]interface{}{"text": req.System}
-		if caching {
-			// Append cachePoint after the system text so the stable system
-			// prompt is cached as the first breakpoint.
-			out.System = []map[string]interface{}{sysBlock, bedrockCachePoint}
-		} else {
-			out.System = []map[string]interface{}{sysBlock}
-		}
+		out.System = []map[string]string{{"text": req.System}}
 	}
 	out.InferenceConfig.Temperature = req.Temperature
 	out.InferenceConfig.MaxTokens = req.MaxTokens
 	if out.InferenceConfig.MaxTokens == 0 {
 		out.InferenceConfig.MaxTokens = 4096
 	}
-	for _, m := range normalizeBedrockToolResults(req.Messages) {
+	for _, m := range req.Messages {
 		role := string(m.Role)
 		if role == "tool" {
 			role = "user"
@@ -363,9 +267,6 @@ func (c *bedrockClient) buildRequest(req Request) (*bedrockRequest, error) {
 				})
 			}
 		}
-		if len(bm.Content) == 0 {
-			continue
-		}
 		out.Messages = append(out.Messages, bm)
 	}
 	if len(req.Tools) > 0 {
@@ -381,115 +282,7 @@ func (c *bedrockClient) buildRequest(req Request) (*bedrockRequest, error) {
 		}
 		out.ToolConfig = &tc
 	}
-
-	if caching {
-		// Tag the last user message with a cachePoint. This extends the
-		// cached prefix to cover the full conversation history up to the
-		// current turn, so the next turn reads that history cheaply.
-		bedrockTagLastUserCache(out.Messages)
-	}
-
 	return out, nil
-}
-
-// bedrockTagLastUserCache appends a cachePoint block to the last user
-// message in the Bedrock message list. It is the Bedrock equivalent of
-// Anthropic's cache_control:{type:"ephemeral"} on the last user message.
-func bedrockTagLastUserCache(msgs []bedrockMessage) {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "user" {
-			msgs[i].Content = append(msgs[i].Content, bedrockCachePoint)
-			return
-		}
-	}
-}
-
-// resolveBedrockInferenceProfileID maps a bare foundation-model ID to
-// its region-matched cross-region inference-profile ID.
-//
-// Several newer Bedrock models (Anthropic Claude 4.x, DeepSeek, etc.)
-// cannot be invoked with on-demand throughput by their plain
-// foundation-model ID; Bedrock returns HTTP 400 demanding "the ID or
-// ARN of an inference profile that contains this model". The profile
-// ID is the same model ID with a geographic prefix (us/eu/apac/...).
-//
-// We only rewrite IDs that (a) lack an existing geo prefix and (b)
-// belong to a model family that requires a profile. IDs that already
-// carry a prefix (e.g. "eu.anthropic...", "global.anthropic...") or
-// fully-qualified ARNs are returned unchanged, so explicit user
-// choices and custom application inference profiles still work.
-func resolveBedrockInferenceProfileID(modelID, region string) string {
-	if modelID == "" {
-		return modelID
-	}
-	// ARNs are already inference-profile references; leave untouched.
-	if strings.HasPrefix(modelID, "arn:") {
-		return modelID
-	}
-	// Already geo-prefixed (us. / eu. / apac. / ap. / us-gov. / global.)?
-	if bedrockHasGeoPrefix(modelID) {
-		return modelID
-	}
-	if !bedrockRequiresInferenceProfile(modelID) {
-		return modelID
-	}
-	prefix := bedrockGeoPrefixForRegion(region)
-	if prefix == "" {
-		return modelID
-	}
-	return prefix + "." + modelID
-}
-
-// bedrockGeoPrefixes are the cross-region inference-profile geo
-// prefixes Bedrock uses. A model ID that starts with one of these
-// (followed by a dot) is already a profile reference.
-var bedrockGeoPrefixes = []string{"us-gov", "us", "eu", "apac", "ap", "global", "au"}
-
-func bedrockHasGeoPrefix(modelID string) bool {
-	for _, p := range bedrockGeoPrefixes {
-		if strings.HasPrefix(modelID, p+".") {
-			return true
-		}
-	}
-	return false
-}
-
-// bedrockRequiresInferenceProfile reports whether a bare
-// foundation-model ID is one of the families AWS only exposes through
-// a cross-region inference profile for on-demand throughput.
-func bedrockRequiresInferenceProfile(modelID string) bool {
-	switch {
-	case strings.HasPrefix(modelID, "anthropic.claude-"):
-		return true
-	case strings.HasPrefix(modelID, "deepseek."):
-		return true
-	default:
-		return false
-	}
-}
-
-// bedrockGeoPrefixForRegion maps an AWS region to the geo prefix used
-// by its cross-region inference profiles. Returns "" when the region
-// has no known mapping, in which case the model ID is left unchanged.
-func bedrockGeoPrefixForRegion(region string) string {
-	switch {
-	case region == "":
-		return "us"
-	case strings.HasPrefix(region, "us-gov-"):
-		return "us-gov"
-	case strings.HasPrefix(region, "us-"):
-		return "us"
-	case strings.HasPrefix(region, "eu-"):
-		return "eu"
-	case strings.HasPrefix(region, "ap-"):
-		return "apac"
-	case strings.HasPrefix(region, "ca-"):
-		return "us"
-	case strings.HasPrefix(region, "sa-"):
-		return "us"
-	default:
-		return "us"
-	}
 }
 
 func (c *bedrockClient) Stream(ctx context.Context, req Request) (<-chan Event, error) {
@@ -501,8 +294,7 @@ func (c *bedrockClient) Stream(ctx context.Context, req Request) (<-chan Event, 
 	if err != nil {
 		return nil, err
 	}
-	modelID := resolveBedrockInferenceProfileID(req.Model, c.region)
-	url := c.baseURL + "/model/" + modelID + "/converse-stream"
+	url := c.baseURL + "/model/" + req.Model + "/converse-stream"
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -525,18 +317,7 @@ func (c *bedrockClient) Stream(ctx context.Context, req Request) (<-chan Event, 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		msg := strings.TrimSpace(string(b))
-		// A 403 on the bearer route is almost always a region mismatch:
-		// short-term Bedrock API keys are scoped to the region of the
-		// console session that minted them, but zot defaults to
-		// us-east-1. Surface the resolved region and the fix so the user
-		// is not left guessing why a freshly-copied key is "invalid".
-		if resp.StatusCode == http.StatusForbidden && c.bearerToken != "" {
-			return nil, fmt.Errorf(
-				"bedrock: http 403 (region=%s): %s\nhint: Bedrock API keys are region-scoped. If your key was created in another region, set AWS_REGION (e.g. AWS_REGION=eu-central-1) or pass --base-url https://bedrock-runtime.<region>.amazonaws.com",
-				c.region, msg)
-		}
-		return nil, fmt.Errorf("bedrock: http %d: %s", resp.StatusCode, msg)
+		return nil, fmt.Errorf("bedrock: http %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	out := make(chan Event, 16)
 	go c.runStream(ctx, resp, req, out)
@@ -569,9 +350,6 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 			return
 		}
 		eventType := evt.headerString(":event-type")
-		if eventType == "" {
-			eventType = bedrockEventTypeFromPayload(evt.payload)
-		}
 		messageType := evt.headerString(":message-type")
 		if messageType == "exception" {
 			out <- EventDone{Stop: StopError, Err: fmt.Errorf("bedrock exception (%s): %s", evt.headerString(":exception-type"), string(evt.payload)), Message: finalMsg}
@@ -590,7 +368,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 					} `json:"toolUse"`
 				} `json:"start"`
 			}
-			if err := unmarshalBedrockEventPayload(evt.payload, "contentBlockStart", &d); err != nil {
+			if err := json.Unmarshal(evt.payload, &d); err != nil {
 				continue
 			}
 			st := &bedrockBlockState{}
@@ -611,13 +389,12 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 					} `json:"toolUse"`
 				} `json:"delta"`
 			}
-			if err := unmarshalBedrockEventPayload(evt.payload, "contentBlockDelta", &d); err != nil {
+			if err := json.Unmarshal(evt.payload, &d); err != nil {
 				continue
 			}
 			st := contentBlocks[d.ContentBlockIndex]
 			if st == nil {
-				st = &bedrockBlockState{}
-				contentBlocks[d.ContentBlockIndex] = st
+				continue
 			}
 			if d.Delta.Text != "" {
 				st.text.WriteString(d.Delta.Text)
@@ -631,7 +408,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 			var d struct {
 				ContentBlockIndex int `json:"contentBlockIndex"`
 			}
-			if err := unmarshalBedrockEventPayload(evt.payload, "contentBlockStop", &d); err != nil {
+			if err := json.Unmarshal(evt.payload, &d); err != nil {
 				continue
 			}
 			st := contentBlocks[d.ContentBlockIndex]
@@ -654,7 +431,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 			var d struct {
 				StopReason string `json:"stopReason"`
 			}
-			_ = unmarshalBedrockEventPayload(evt.payload, "messageStop", &d)
+			_ = json.Unmarshal(evt.payload, &d)
 			switch d.StopReason {
 			case "tool_use":
 				stop = StopToolUse
@@ -674,7 +451,7 @@ func (c *bedrockClient) runStream(ctx context.Context, resp *http.Response, req 
 					CacheWriteInputTokens int `json:"cacheWriteInputTokens"`
 				} `json:"usage"`
 			}
-			if err := unmarshalBedrockEventPayload(evt.payload, "metadata", &d); err == nil {
+			if err := json.Unmarshal(evt.payload, &d); err == nil {
 				usage.InputTokens = d.Usage.InputTokens
 				usage.OutputTokens = d.Usage.OutputTokens
 				usage.CacheReadTokens = d.Usage.CacheReadInputTokens
@@ -695,32 +472,6 @@ type bedrockBlockState struct {
 	toolName  string
 	toolArgs  strings.Builder
 	text      strings.Builder
-}
-
-func bedrockEventTypeFromPayload(payload []byte) string {
-	var outer map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &outer); err != nil {
-		return ""
-	}
-	for _, name := range []string{"messageStart", "contentBlockStart", "contentBlockDelta", "contentBlockStop", "messageStop", "metadata"} {
-		if _, ok := outer[name]; ok {
-			return name
-		}
-	}
-	return ""
-}
-
-func unmarshalBedrockEventPayload(payload []byte, eventType string, dst any) error {
-	var outer map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &outer); err == nil {
-		if wrapped, ok := outer[eventType]; ok {
-			return json.Unmarshal(wrapped, dst)
-		}
-	}
-	if err := json.Unmarshal(payload, dst); err != nil {
-		return fmt.Errorf("bedrock: parse %s payload: %w", eventType, err)
-	}
-	return nil
 }
 
 // ---- event-stream binary framing parser ----

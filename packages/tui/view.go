@@ -245,7 +245,10 @@ func (v *View) BuildLive(width int) []string {
 	finalised := map[string]bool{}
 	for _, m := range v.Messages {
 		for _, c := range m.Content {
-			if b, ok := c.(provider.ToolResultBlock); ok {
+			switch b := c.(type) {
+			case provider.ToolCallBlock:
+				finalised[b.ID] = true
+			case provider.ToolResultBlock:
 				finalised[b.CallID] = true
 			}
 		}
@@ -263,35 +266,8 @@ func (v *View) BuildLive(width int) []string {
 		// out = append(out, "")
 	}
 	if v.Err != "" {
-		out = append(out, v.renderErr(width)...)
+		out = append(out, v.Theme.FG256(v.Theme.Error, "✖ "+v.Err))
 		// out = append(out, "")
-	}
-	return out
-}
-
-// renderErr formats v.Err into one or more colored rows, word-wrapped
-// to width so long provider error messages (e.g. a Bedrock 400 with an
-// embedded JSON body) aren't cut off at the terminal edge. The first
-// row carries the "✖ " marker; continuation rows align under the text
-// with a two-cell indent.
-func (v *View) renderErr(width int) []string {
-	const marker = "✖ "
-	const indent = "  "
-	wrapWidth := width - len([]rune(marker))
-	if wrapWidth < 8 {
-		wrapWidth = 8
-	}
-	wrapped := wrapLine(v.Err, wrapWidth, "")
-	if len(wrapped) == 0 {
-		wrapped = []string{""}
-	}
-	out := make([]string, 0, len(wrapped))
-	for idx, line := range wrapped {
-		prefix := marker
-		if idx > 0 {
-			prefix = indent
-		}
-		out = append(out, v.Theme.FG256(v.Theme.Error, prefix+line))
 	}
 	return out
 }
@@ -394,15 +370,21 @@ func (v *View) BuildWithAnchors(width int) ([]string, []MessageAnchor) {
 		}
 		out = append(out, "")
 	}
-	// Live tool-call overlay: keep the in-flight box visible after
-	// the assistant tool_use is appended, then hide it only when the
-	// matching tool_result reaches the transcript. Assistant tool_use
-	// blocks render no rows of their own, so suppressing the overlay
-	// at that point makes the box disappear while the tool is running.
+	// Live tool-call overlay: skip any entry whose assistant
+	// tool_use block OR tool_result has already made it into the
+	// transcript. The EvAssistantMessage for a tool-use turn
+	// lands BEFORE executeTools runs, so between that moment and
+	// the tool-result being appended the overlay and the
+	// finalised transcript both render the same call. Checking
+	// for either side of the pair suppresses the duplicate in
+	// both windows.
 	finalised := map[string]bool{}
 	for _, m := range v.Messages {
 		for _, c := range m.Content {
-			if b, ok := c.(provider.ToolResultBlock); ok {
+			switch b := c.(type) {
+			case provider.ToolCallBlock:
+				finalised[b.ID] = true
+			case provider.ToolResultBlock:
 				finalised[b.CallID] = true
 			}
 		}
@@ -415,7 +397,7 @@ func (v *View) BuildWithAnchors(width int) ([]string, []MessageAnchor) {
 		out = append(out, "")
 	}
 	if v.Err != "" {
-		out = append(out, v.renderErr(width)...)
+		out = append(out, v.Theme.FG256(v.Theme.Error, "✖ "+v.Err))
 		out = append(out, "")
 	}
 	return out, anchors
@@ -730,20 +712,20 @@ func (v *View) renderToolCall(tc ToolCallView, width int) []string {
 	// here would double the gap during streaming and visibly tighten
 	// when the overlay disappears.
 
-	// Live body (write/edit): keep the streamed preview visible until
-	// a real tool result arrives. The provider can finish the tool_use
-	// JSON before zot has executed the tool, so keying this on
-	// tc.Streaming makes write/edit boxes collapse for a moment between
-	// EvToolUseEnd and EvToolResult.
-	if tc.Result == "" {
+	// Streaming body (write/edit): top edge with the label, body
+	// rows wrapped with vertical edges, bottom edge to close the
+	// box. When the call finalises, the live overlay disappears
+	// the same frame the transcript renders the closed box, so
+	// there's no visible hop.
+	if tc.Streaming && tc.Result == "" {
+		lines = append(lines, toolBoxTop(v.Theme, label, width))
+		lines = append(lines, toolBoxSide(v.Theme, "", width))
 		if body := v.renderLiveToolBody(tc, width); len(body) > 0 {
-			lines = append(lines, toolBoxTop(v.Theme, label, width))
-			lines = append(lines, toolBoxSide(v.Theme, "", width))
 			lines = append(lines, body...)
-			lines = append(lines, toolBoxSide(v.Theme, "", width))
-			lines = append(lines, toolBoxBottom(v.Theme, width))
-			return lines
 		}
+		lines = append(lines, toolBoxSide(v.Theme, "", width))
+		lines = append(lines, toolBoxBottom(v.Theme, width))
+		return lines
 	}
 
 	// Finished tool call with no body: just the labelled top edge

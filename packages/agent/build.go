@@ -213,51 +213,6 @@ func isKnownProvider(name string) bool {
 	return false
 }
 
-// providerAliases maps common short / alternate provider names to the
-// canonical id in knownProviders. Users (and other agents) reach for
-// "bedrock" or "vertex" far more naturally than the fully-qualified
-// "amazon-bedrock" / "google-vertex"; without this mapping an alias is
-// treated as an unknown provider and Resolve silently falls back to
-// anthropic, producing a misleading "no credential for anthropic" error
-// after the user explicitly picked, say, bedrock.
-var providerAliases = map[string]string{
-	"bedrock":      "amazon-bedrock",
-	"aws-bedrock":  "amazon-bedrock",
-	"amazon":       "amazon-bedrock",
-	"vertex":       "google-vertex",
-	"gcp-vertex":   "google-vertex",
-	"gemini":       "google",
-	"googleai":     "google",
-	"google-ai":    "google",
-	"azure":        "azure-openai-responses",
-	"azure-openai": "azure-openai-responses",
-	"copilot":      "github-copilot",
-	"github":       "github-copilot",
-	"codex":        "openai-codex",
-	"moonshot":     "moonshotai",
-	"kimi-code":    "kimi",
-	"ai-gateway":   "vercel-ai-gateway",
-	"vercel":       "vercel-ai-gateway",
-	"cloudflare":   "cloudflare-workers-ai",
-	"workers-ai":   "cloudflare-workers-ai",
-	"hf":           "huggingface",
-}
-
-// canonicalProvider normalises a user-supplied provider name: trims
-// surrounding whitespace, lower-cases it, and resolves any known alias
-// to its canonical id. Unknown names are returned trimmed/lower-cased
-// and unchanged so the existing unknown-provider handling still runs.
-func canonicalProvider(name string) string {
-	n := strings.ToLower(strings.TrimSpace(name))
-	if n == "" {
-		return n
-	}
-	if canon, ok := providerAliases[n]; ok {
-		return canon
-	}
-	return n
-}
-
 // Resolve merges args, config, and env into a Resolved set.
 //
 // Unlike the earlier version, Resolve NEVER returns an error for
@@ -268,11 +223,7 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 	cfg, _ := LoadConfig()
 
 	// User-requested provider (explicit > config > default).
-	// Normalise common aliases (e.g. "bedrock" -> "amazon-bedrock")
-	// before validation so an alias is never mistaken for an unknown
-	// provider and silently downgraded to anthropic.
-	argProvider := canonicalProvider(args.Provider)
-	provName := firstNonEmpty(argProvider, canonicalProvider(cfg.Provider), "anthropic")
+	provName := firstNonEmpty(args.Provider, cfg.Provider, "anthropic")
 	if !isKnownProvider(provName) {
 		// Unknown provider (maybe removed or renamed). Fall back to
 		// the first provider that has credentials, or anthropic.
@@ -305,6 +256,9 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 		credErr   error
 	)
 	if provName == "ollama" {
+		if args.BaseURL == "" {
+			args.BaseURL = "http://localhost:11434"
+		}
 		cred = firstNonEmpty(args.APIKey, "ollama")
 		method = "apikey"
 	} else {
@@ -395,14 +349,9 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 	}
 
 	// If the model defines a base URL (e.g. local ollama) and the
-	// user didn't pass --base-url, use the model's URL. For ollama,
-	// keep http://localhost:11434 as a fallback only after the model
-	// metadata has had a chance to provide a custom baseUrl.
+	// user didn't pass --base-url, use the model's URL.
 	if args.BaseURL == "" && resolvedModel.BaseURL != "" {
 		args.BaseURL = resolvedModel.BaseURL
-	}
-	if args.BaseURL == "" && provName == "ollama" {
-		args.BaseURL = "http://localhost:11434"
 	}
 
 	// If the model has a base URL, credentials are optional (local
