@@ -2,6 +2,7 @@ package tui
 
 import (
 	"io"
+	"os"
 	"strings"
 
 	"github.com/mattn/go-runewidth"
@@ -45,11 +46,44 @@ type Renderer struct {
 	logViewportTop int
 	logHardwareRow int
 	logInit        bool
+
+	// keepScrollback is true when we must NOT emit \x1b[3J
+	// (erase-in-display 3, "clear scrollback").
+	//
+	// VS Code's integrated terminal (xterm.js) interprets \x1b[3J
+	// as "also snap the viewport to the top of the remaining
+	// buffer." Once the user has reopened a terminal with VS
+	// Code's persistent-sessions feature on, there is real
+	// replayed scrollback above the live cursor, and the snap is
+	// visible: the host scrollbar jumps to the top every time we
+	// do a full repaint (first paint, Ctrl+L via Renderer.Clear,
+	// any writeFull(true) shrink). On every other terminal we
+	// tested (iTerm, Ghostty, Kitty, Alacritty, Apple Terminal)
+	// \x1b[3J just drops scrollback rows without moving the
+	// viewport, which is what we actually want.
+	//
+	// The trade-off when keepScrollback is true: stale zot frames
+	// remain in scrollback above the live view, so scrolling up
+	// in VS Code's terminal shows old (already-superseded) zot
+	// output. That is strictly less disruptive than the
+	// scrollbar yanking to top on every Ctrl+L, and it is a
+	// limitation specific to VS Code's terminal that we have no
+	// way to work around without breaking other terminals.
+	keepScrollback bool
 }
 
 // NewRenderer returns a renderer that writes to out.
+//
+// Detects VS Code's integrated terminal via $TERM_PROGRAM and, when
+// detected, disables emission of \x1b[3J for the reasons documented
+// on Renderer.keepScrollback. The env var is set by VS Code itself
+// (and by Cursor, which forks VS Code's terminal — same xterm.js,
+// same bug), so no user configuration is required.
 func NewRenderer(out io.Writer) *Renderer {
-	return &Renderer{out: out}
+	return &Renderer{
+		out:            out,
+		keepScrollback: os.Getenv("TERM_PROGRAM") == "vscode",
+	}
 }
 
 // Resize tells the renderer the current terminal size.
@@ -76,12 +110,14 @@ func (r *Renderer) Resize(cols, rows int) {
 		r.logHardwareRow = 0
 		r.logInit = false
 		if r.out != nil {
-			// Clear both screen and scrollback so stale content from
-			// the old width doesn't bleed through. Move to (1,1) so
-			// the next DrawLog/writeFull starts from a clean slate.
-			// Use the no-home variant: the explicit MoveTo below sets
-			// the cursor without triggering VS Code's viewport-snap.
-			_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreenNoHome+SeqClearScrollback+MoveTo(1, 1))
+			// Clear both screen and (where safe) scrollback so stale
+			// content from the old width doesn't bleed through. Move
+			// to (1,1) so the next DrawLog/writeFull starts from a
+			// clean slate. Use the no-home variant: the explicit
+			// MoveTo below sets the cursor without triggering VS
+			// Code's viewport-snap. See Renderer.keepScrollback for
+			// why we skip \x1b[3J on VS Code's terminal.
+			_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreenNoHome+r.clearScrollbackSeq()+MoveTo(1, 1))
 		}
 	}
 }
@@ -99,7 +135,19 @@ func (r *Renderer) Clear() {
 	r.logViewportTop = 0
 	r.logHardwareRow = 0
 	r.logInit = false
-	_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreenNoHome+SeqClearScrollback+MoveTo(1, 1))
+	_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreenNoHome+r.clearScrollbackSeq()+MoveTo(1, 1))
+}
+
+// clearScrollbackSeq returns the scrollback-clear escape, or the
+// empty string when we are running under a terminal where emitting
+// it has user-visible side effects (see Renderer.keepScrollback).
+// Callers concatenate this into a larger control sequence; an empty
+// return value is a no-op there.
+func (r *Renderer) clearScrollbackSeq() string {
+	if r.keepScrollback {
+		return ""
+	}
+	return SeqClearScrollback
 }
 
 // Invalidate forces a full repaint on the next Draw without clearing the
@@ -342,7 +390,7 @@ func (r *Renderer) DrawLog(chat, bottom []string, cursorBottomRow, cursorCol int
 		if clear {
 			w.WriteString(SeqDeleteKittyImages)
 			w.WriteString(SeqClearScreenNoHome)
-			w.WriteString(SeqClearScrollback)
+			w.WriteString(r.clearScrollbackSeq())
 			w.WriteString(MoveTo(1, 1))
 		}
 		for idx, line := range lines {
