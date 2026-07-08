@@ -122,17 +122,25 @@ func (r *Renderer) Resize(cols, rows int) {
 		r.logViewportTop = 0
 		r.logHardwareRow = 0
 		r.logInit = false
-		if r.out != nil && !r.keepScrollback {
-			// Clear both screen and (where safe) scrollback so stale
-			// content from the old width doesn't bleed through. Move
-			// to (1,1) so the next DrawLog/writeFull starts from a
-			// clean slate. Use the no-home variant: the explicit
-			// MoveTo below sets the cursor without triggering VS
-			// Code's viewport-snap. See Renderer.keepScrollback for
-			// why we skip \x1b[3J on VS Code's terminal. On VS Code we
-			// skip the eager wipe entirely and let the next DrawLog
-			// repaint in place (see Clear).
-			_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreenNoHome+r.clearScrollbackSeq()+MoveTo(1, 1))
+		if r.out != nil {
+			if r.keepScrollback {
+				// A resize is a discrete user action, like Ctrl+L: the
+				// old-width frame must be fully purged or the in-place
+				// viewport clear leaves the scrolled-away rows behind
+				// (the user otherwise has to press Ctrl+L to fix it).
+				// Emit \x1b[3J to drop the retained scrollback and
+				// repaint clean, accepting VS Code's viewport-snap the
+				// same way Clear does.
+				_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreen+SeqClearScrollback+MoveTo(1, 1))
+			} else {
+				// Clear both screen and (where safe) scrollback so stale
+				// content from the old width doesn't bleed through. Move
+				// to (1,1) so the next DrawLog/writeFull starts from a
+				// clean slate. Use the no-home variant: the explicit
+				// MoveTo below sets the cursor without triggering VS
+				// Code's viewport-snap.
+				_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreenNoHome+r.clearScrollbackSeq()+MoveTo(1, 1))
+			}
 		}
 	}
 }
@@ -151,12 +159,21 @@ func (r *Renderer) Clear() {
 	r.logHardwareRow = 0
 	r.logInit = false
 	if r.keepScrollback {
-		// Don't eagerly emit \x1b[2J here: on VS Code's xterm.js that
-		// scrolls the current frame up into scrollback, leaving a
-		// duplicate above the repaint. Just drop the diff state; the
-		// next DrawLog's writeFull does an in-place viewport clear
-		// (home + erase-to-end) that overwrites the old frame without
-		// duplicating it.
+		// On VS Code's xterm.js the transcript is taller than the
+		// viewport, so an in-place clear (home + erase-to-end) only
+		// wipes the visible rows: the part that scrolled above the
+		// viewport stays in the retained buffer and the next full
+		// repaint stacks a duplicate above the live frame.
+		//
+		// Clear() is an explicit user refresh (Ctrl+L), so here we do
+		// emit \x1b[3J to actually drop that scrollback, then home and
+		// repaint. This is the one place we accept VS Code's
+		// viewport-snap, because the user asked for a clean screen.
+		// (Implicit repaints, e.g. closing a dialog, deliberately
+		// avoid this path so they never snap the viewport.)
+		if r.out != nil {
+			_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreen+SeqClearScrollback+MoveTo(1, 1))
+		}
 		return
 	}
 	_, _ = io.WriteString(r.out, SeqDeleteKittyImages+SeqClearScreenNoHome+r.clearScrollbackSeq()+MoveTo(1, 1))
