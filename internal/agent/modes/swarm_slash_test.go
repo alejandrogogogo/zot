@@ -2,7 +2,6 @@ package modes
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,7 +18,6 @@ func newInteractiveForSwarmTest(t *testing.T) (*Interactive, *swarm.Swarm) {
 	f := swarm.New(swarm.Config{
 		Root:     root,
 		RepoRoot: root,
-		Worktree: swarm.MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *swarm.Agent) swarm.Runner {
 			return swarm.RunnerFunc(func(ctx context.Context, sink swarm.Sink) error {
 				<-ctx.Done()
@@ -107,7 +105,6 @@ func TestRunSwarmSendDeliversToAgentInbox(t *testing.T) {
 	f := swarm.New(swarm.Config{
 		Root:     root,
 		RepoRoot: root,
-		Worktree: swarm.MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *swarm.Agent) swarm.Runner {
 			return swarm.RunnerFunc(func(ctx context.Context, sink swarm.Sink) error {
 				// Stand up a real Listener on the agent's inbox path so

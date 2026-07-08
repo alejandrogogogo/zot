@@ -23,7 +23,7 @@ import (
 //	↑/↓        move cursor
 //	enter      show transcript tail for the selected agent
 //	k          kill (Stop) the selected running agent
-//	r          remove a terminated agent (deletes worktree)
+//	r          remove a terminated agent (clears its state)
 //	esc / q    close
 //
 // Keys (transcript view):
@@ -44,8 +44,8 @@ type swarmDialog struct {
 	// Wired by Open(); when nil the inline 'p' shortcut is disabled.
 	send func(id, text string) error
 	// resume restarts a detached or terminated agent on its existing
-	// worktree/session. Wired by Open(); when nil the inline 'R'
-	// shortcut is disabled.
+	// session. Wired by Open(); when nil the inline 'R' shortcut is
+	// disabled.
 	resume func(id string) error
 
 	rows    []swarm.AgentSnapshot
@@ -240,7 +240,7 @@ func (d *swarmDialog) transcriptEditorCursorRow(width, popupRows, editorRowOffse
 		return -1
 	}
 	row := 1 // frame header
-	row += 4 // task / branch / dir / status
+	row += 3 // task / dir / status (mirrors renderTranscript's fixed header rows)
 	if a.Model != "" {
 		row++
 	}
@@ -400,7 +400,7 @@ func promptDisabledHint(s swarm.Status) string {
 // killDisabledHint mirrors promptDisabledHint for the 'k' shortcut.
 // Kill only makes sense on running / pending agents; on detached and
 // terminal ones it's a no-op and the user usually wants 'r' (remove)
-// to clean up the worktree instead.
+// to clear out the agent's state instead.
 func killDisabledHint(s swarm.Status) string {
 	return "kill: agent is " + string(s) + "; nothing to stop (press r to remove)"
 }
@@ -1033,7 +1033,6 @@ func (d *swarmDialog) renderTranscript(th tui.Theme, width int) []string {
 	header := []string{
 		frameHeader(th, "swarm: "+a.ID+"  (type to send, esc back)", width),
 		"  " + th.FG256(th.Muted, "task:   "+a.Task),
-		"  " + th.FG256(th.Muted, "branch: "+a.Branch),
 		"  " + th.FG256(th.Muted, "dir:    "+a.Dir),
 		"  " + th.FG256(th.Muted, fmt.Sprintf("status: %s, %s", a.Status, a.Activity)),
 	}
@@ -1321,6 +1320,12 @@ func (d *swarmDialog) renderPromptEditor(th tui.Theme, width int, out []string) 
 }
 
 // formatSwarmRow is the one-line summary shown per agent.
+//
+// Layout (fixed-width columns, then free-form activity):
+//
+//	STATUS    ID                          AGE       ACTIVITY
+//	● run     fix-login-12345             3m        editing main.go
+//	✓ done    write-tests-67890           1h        done
 func formatSwarmRow(r swarm.AgentSnapshot, maxWidth int) string {
 	status := statusLabel(r.Status)
 	age := formatAge(r.Started)

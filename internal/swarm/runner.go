@@ -14,7 +14,8 @@ import (
 )
 
 // execRunner spawns `zot --swarm-agent <inbox> --session <path>` in
-// the agent's worktree and consumes its JSONL event stream on stdout.
+// the host's working directory (Agent.Dir, which is always the parent
+// zot's RepoRoot) and consumes its JSONL event stream on stdout.
 //
 // Why a long-lived daemon and not `zot --print`: the supervisor and
 // the user expect agents to keep accepting follow-up prompts. A
@@ -40,9 +41,14 @@ type execRunner struct {
 	// tested without a real child. Production code leaves it nil.
 	Command []string
 
-	// SessionPath is the agent's session file. When empty the
-	// runner derives it as <Dir>/.zot/session.json so each agent
-	// owns its own session inside its worktree.
+	// SessionPath is the agent's session file. Empty means "defer
+	// to r.agent.SessionPath", which Swarm.Spawn always populates
+	// with <swarm-root>/agents/<id>/session.json. Tests that
+	// hand-build an Agent without going through Spawn must set
+	// one of the two; the runner refuses to invent a fallback
+	// because the only plausible one (<Dir>/.zot/session.json)
+	// would litter the user's repo — every agent's Dir points
+	// at it directly.
 	SessionPath string
 }
 
@@ -116,9 +122,27 @@ func swarmAgentArgs(opts swarmAgentArgsOpts) []string {
 }
 
 func (r *execRunner) Run(ctx context.Context, sink Sink) error {
+	// SessionPath resolution order:
+	//   1. explicit r.SessionPath set by the test / caller
+	//   2. r.agent.SessionPath baked in by Swarm.Spawn — the
+	//      production path. Always lives under
+	//      <swarm-root>/agents/<id>/session.json so the per-
+	//      agent state is entirely outside the working tree.
+	//      Crucial because Agent.Dir points at the user's repo;
+	//      any .zot/ scratch directory under Dir would litter
+	//      their source tree.
+	//
+	// There is no third fallback. If neither path is set we
+	// refuse to start instead of inventing a directory; that
+	// way a misconfigured caller fails loudly the first time
+	// instead of silently dumping session data into someone's
+	// repo.
 	sessionPath := r.SessionPath
 	if sessionPath == "" {
-		sessionPath = filepath.Join(r.agent.Dir, ".zot", "session.json")
+		sessionPath = r.agent.SessionPath
+	}
+	if sessionPath == "" {
+		return fmt.Errorf("swarm: agent missing session path (set SpawnRequest via Swarm.SpawnReq, or hand-build Agent with SessionPath populated)")
 	}
 	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o755); err != nil {
 		return fmt.Errorf("session dir: %w", err)

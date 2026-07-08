@@ -21,7 +21,6 @@ func TestSpawnWritesMetaJSON(t *testing.T) {
 	f := New(Config{
 		Root:     root,
 		RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *Agent) Runner {
 			return RunnerFunc(func(ctx context.Context, _ Sink) error {
 				<-ctx.Done()
@@ -51,7 +50,7 @@ func TestSpawnWritesMetaJSON(t *testing.T) {
 	if got.Task != "investigate widget" {
 		t.Errorf("meta.Task = %q", got.Task)
 	}
-	if got.Branch != a.Branch || got.Dir != a.Dir {
+	if got.Dir != a.Dir {
 		t.Errorf("meta paths drifted: %+v vs agent %+v", got, a)
 	}
 	if got.InboxPath == "" || got.EventLogPath == "" || got.SessionPath == "" {
@@ -74,7 +73,6 @@ func TestReloadRebuildsDetachedAgents(t *testing.T) {
 	first := New(Config{
 		Root:     root,
 		RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *Agent) Runner {
 			return RunnerFunc(func(ctx context.Context, _ Sink) error {
 				<-ctx.Done()
@@ -101,7 +99,6 @@ func TestReloadRebuildsDetachedAgents(t *testing.T) {
 	second := New(Config{
 		Root:     root,
 		RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 	})
 	loaded, errs := second.Reload()
 	if len(errs) > 0 {
@@ -140,7 +137,6 @@ func TestReloadIsIdempotent(t *testing.T) {
 	root := t.TempDir()
 	first := New(Config{
 		Root: root, RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *Agent) Runner {
 			return RunnerFunc(func(ctx context.Context, _ Sink) error { <-ctx.Done(); return ctx.Err() })
 		},
@@ -150,7 +146,7 @@ func TestReloadIsIdempotent(t *testing.T) {
 	}
 	first.StopAll()
 
-	second := New(Config{Root: root, RepoRoot: root, Worktree: MemWorktree(filepath.Join(root, "wt"))})
+	second := New(Config{Root: root, RepoRoot: root})
 	loaded1, _ := second.Reload()
 	loaded2, errs := second.Reload()
 	if len(errs) > 0 {
@@ -177,8 +173,8 @@ func TestReloadReplaysTranscriptFromEventLog(t *testing.T) {
 	}
 	// meta.json
 	m := agentMeta{
-		ID: id, Task: "do thing", Branch: "swarm/alpha-9",
-		Dir: filepath.Join(root, "wt", id), Started: time.Now().Add(-time.Hour),
+		ID: id, Task: "do thing",
+		Dir: root, Started: time.Now().Add(-time.Hour),
 		InboxPath:    filepath.Join(stateDir, "in.sock"),
 		EventLogPath: filepath.Join(stateDir, "events.jsonl"),
 		SessionPath:  filepath.Join(stateDir, "session.json"),
@@ -198,7 +194,7 @@ func TestReloadReplaysTranscriptFromEventLog(t *testing.T) {
 	_ = log.Append(NewEvent("agent_stopped", map[string]any{"reason": "shutdown"}))
 	_ = log.Close()
 
-	f := New(Config{Root: root, RepoRoot: root, Worktree: MemWorktree(filepath.Join(root, "wt"))})
+	f := New(Config{Root: root, RepoRoot: root})
 	loaded, errs := f.Reload()
 	if len(errs) > 0 || loaded != 1 {
 		t.Fatalf("reload loaded=%d errs=%v", loaded, errs)
@@ -246,11 +242,11 @@ func TestReloadSkipsBareDirsAndCorruptMeta(t *testing.T) {
 	good := "good-1"
 	stateDir := filepath.Join(agentsDir, good)
 	_ = os.MkdirAll(stateDir, 0o755)
-	m := agentMeta{ID: good, Task: "x", Branch: "swarm/" + good, Dir: "/tmp/x", Started: time.Now()}
+	m := agentMeta{ID: good, Task: "x", Dir: "/tmp/x", Started: time.Now()}
 	mb, _ := json.MarshalIndent(m, "", "  ")
 	_ = os.WriteFile(filepath.Join(stateDir, "meta.json"), mb, 0o644)
 
-	f := New(Config{Root: root, RepoRoot: root, Worktree: MemWorktree(filepath.Join(root, "wt"))})
+	f := New(Config{Root: root, RepoRoot: root})
 	loaded, errs := f.Reload()
 	if loaded != 1 {
 		t.Errorf("loaded = %d; want 1", loaded)
@@ -276,7 +272,6 @@ func TestResumeRestartsRunnerOnSameSession(t *testing.T) {
 	)
 	f := New(Config{
 		Root: root, RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *Agent) Runner {
 			return RunnerFunc(func(ctx context.Context, sink Sink) error {
 				mu.Lock()
@@ -358,7 +353,6 @@ func TestResumeSetsResumingFlag(t *testing.T) {
 	root := t.TempDir()
 	f := New(Config{
 		Root: root, RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *Agent) Runner {
 			return RunnerFunc(func(ctx context.Context, _ Sink) error { <-ctx.Done(); return ctx.Err() })
 		},
@@ -392,7 +386,6 @@ func TestResumeRejectsRunningAgent(t *testing.T) {
 	root := t.TempDir()
 	f := New(Config{
 		Root: root, RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *Agent) Runner {
 			return RunnerFunc(func(ctx context.Context, _ Sink) error { <-ctx.Done(); return ctx.Err() })
 		},
@@ -430,7 +423,6 @@ func TestResumeAfterReload(t *testing.T) {
 	// Process A
 	a := New(Config{
 		Root: root, RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(ag *Agent) Runner {
 			return RunnerFunc(func(ctx context.Context, sink Sink) error {
 				sink.Transcript("first run for " + ag.ID)
@@ -456,7 +448,6 @@ func TestResumeAfterReload(t *testing.T) {
 	resumed := make(chan struct{}, 1)
 	b := New(Config{
 		Root: root, RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(ag *Agent) Runner {
 			return RunnerFunc(func(ctx context.Context, sink Sink) error {
 				sink.Transcript("second run for " + ag.ID)
@@ -507,7 +498,6 @@ func TestSpawnReqPersistsModel(t *testing.T) {
 	root := t.TempDir()
 	f := New(Config{
 		Root: root, RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *Agent) Runner {
 			return RunnerFunc(func(ctx context.Context, _ Sink) error { <-ctx.Done(); return ctx.Err() })
 		},
@@ -547,7 +537,7 @@ func TestSpawnReqPersistsModel(t *testing.T) {
 	// Reload in a fresh Swarm and confirm the detached agent still
 	// carries the model/provider so Resume can route the child
 	// subprocess back to the same model.
-	g := New(Config{Root: root, RepoRoot: root, Worktree: MemWorktree(filepath.Join(root, "wt"))})
+	g := New(Config{Root: root, RepoRoot: root})
 	if loaded, errs := g.Reload(); loaded != 1 || len(errs) > 0 {
 		t.Fatalf("reload loaded=%d errs=%v", loaded, errs)
 	}
@@ -605,8 +595,8 @@ func TestStopOnDetachedAgentIsNoopAndDoesNotPanic(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := agentMeta{
-		ID: id, Task: "t", Branch: "swarm/" + id,
-		Dir:          filepath.Join(root, "wt", id),
+		ID: id, Task: "t",
+		Dir:          root,
 		Started:      time.Now().Add(-time.Hour),
 		InboxPath:    filepath.Join(stateDir, "in.sock"),
 		EventLogPath: filepath.Join(stateDir, "events.jsonl"),
@@ -617,7 +607,7 @@ func TestStopOnDetachedAgentIsNoopAndDoesNotPanic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	f := New(Config{Root: root, RepoRoot: root, Worktree: MemWorktree(filepath.Join(root, "wt"))})
+	f := New(Config{Root: root, RepoRoot: root})
 	if loaded, errs := f.Reload(); loaded != 1 || len(errs) > 0 {
 		t.Fatalf("reload loaded=%d errs=%v", loaded, errs)
 	}
@@ -654,7 +644,6 @@ func TestRemoveAlsoCleansStateDir(t *testing.T) {
 	root := t.TempDir()
 	f := New(Config{
 		Root: root, RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *Agent) Runner {
 			return RunnerFunc(func(ctx context.Context, _ Sink) error { <-ctx.Done(); return ctx.Err() })
 		},
@@ -679,7 +668,7 @@ func TestRemoveAlsoCleansStateDir(t *testing.T) {
 	}
 
 	// A fresh Swarm + Reload should find nothing.
-	g := New(Config{Root: root, RepoRoot: root, Worktree: MemWorktree(filepath.Join(root, "wt"))})
+	g := New(Config{Root: root, RepoRoot: root})
 	if loaded, _ := g.Reload(); loaded != 0 {
 		t.Fatalf("reload after remove loaded=%d; want 0", loaded)
 	}
@@ -694,7 +683,6 @@ func TestActiveSessionScopesSnapshotAll(t *testing.T) {
 	root := t.TempDir()
 	f := New(Config{
 		Root: root, RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *Agent) Runner {
 			return RunnerFunc(func(ctx context.Context, _ Sink) error { <-ctx.Done(); return ctx.Err() })
 		},
@@ -759,7 +747,6 @@ func TestSessionIDPersistsAcrossReload(t *testing.T) {
 	mkSwarm := func() *Swarm {
 		return New(Config{
 			Root: root, RepoRoot: root,
-			Worktree: MemWorktree(filepath.Join(root, "wt")),
 			NewRunner: func(a *Agent) Runner {
 				return RunnerFunc(func(ctx context.Context, _ Sink) error { <-ctx.Done(); return ctx.Err() })
 			},
@@ -803,7 +790,6 @@ func TestEmptySessionIDIsVisibleFromAnyScope(t *testing.T) {
 	root := t.TempDir()
 	f := New(Config{
 		Root: root, RepoRoot: root,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *Agent) Runner {
 			return RunnerFunc(func(ctx context.Context, _ Sink) error { <-ctx.Done(); return ctx.Err() })
 		},

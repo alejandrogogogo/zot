@@ -100,7 +100,7 @@ func TestSwarmDialogEnterShowsTranscript(t *testing.T) {
 	_ = d.Render(tui.Theme{}, 80)
 	d.HandleKey(tui.Key{Kind: tui.KeyEnter})
 	out := strings.Join(d.Render(tui.Theme{}, 80), "\n")
-	for _, want := range []string{"task:", "branch:", "line a", "line b"} {
+	for _, want := range []string{"task:", "dir:", "line a", "line b"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("transcript view missing %q:\n%s", want, out)
 		}

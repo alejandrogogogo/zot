@@ -46,7 +46,6 @@ func TestRunnerEndToEndWithStubChild(t *testing.T) {
 	f := New(Config{
 		Root:     root,
 		RepoRoot: repo,
-		Worktree: MemWorktree(filepath.Join(root, "wt")),
 		NewRunner: func(a *Agent) Runner {
 			return &execRunner{
 				agent: a,
