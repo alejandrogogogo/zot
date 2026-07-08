@@ -172,6 +172,9 @@ func Run(rawArgs []string, version string) error {
 	if handled, err := runExtCommand(rawArgs); handled {
 		return err
 	}
+	if handled, err := runUpdateCommand(rawArgs, version); handled {
+		return err
+	}
 	// `zot rpc` is shorthand for `zot --rpc` so third-party apps can
 	// spawn the binary with a clean argv. Strip the leading 'rpc'
 	// token and let the rest flow through the normal arg parser.
