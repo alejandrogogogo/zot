@@ -1,4 +1,4 @@
-# secret — example zot extension (Go, phase 4)
+# secret — example zot extension
 
 Demonstrates **secret collection via a masked panel**: the model asks
 for a resource that needs a credential, the extension collects the

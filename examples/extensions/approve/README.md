@@ -1,9 +1,9 @@
-# approve — example zot extension (Go, phase 4)
+# approve — example zot extension
 
-Demonstrates the **spontaneous `open_panel`** pattern introduced in
-phase 4: an extension-registered tool opens a panel from inside its
-handler goroutine, blocks until the user responds, then returns the
-result to the model.
+Demonstrates the **spontaneous `open_panel`** pattern: an
+extension-registered tool opens a panel from inside its handler
+goroutine, blocks until the user responds, then returns the result to
+the model.
 
 ## What it does
 
