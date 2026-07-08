@@ -129,7 +129,7 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 
 	// User-requested provider (explicit > config > default).
 	provName := firstNonEmpty(args.Provider, cfg.Provider, "anthropic")
-	if provName != "anthropic" && provName != "openai" && provName != "kimi" && provName != "google" && provName != "ollama" {
+	if provName != "anthropic" && provName != "openai" && provName != "kimi" && provName != "deepseek" && provName != "google" && provName != "ollama" {
 		// Unknown provider (maybe removed or renamed). Fall back to
 		// the first provider that has credentials, or anthropic.
 		provName = "anthropic"
@@ -138,6 +138,9 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 		}
 		if _, _, _, err := ResolveCredentialFull("kimi", ""); err == nil {
 			provName = "kimi"
+		}
+		if _, _, _, err := ResolveCredentialFull("deepseek", ""); err == nil {
+			provName = "deepseek"
 		}
 		if _, _, _, err := ResolveCredentialFull("anthropic", ""); err == nil {
 			provName = "anthropic"
@@ -170,7 +173,7 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 	// never shows a "not logged in" banner.
 	userPickedProvider := args.Provider != ""
 	if credErr != nil && !userPickedProvider && provName != "ollama" {
-		for _, other := range []string{"anthropic", "openai", "kimi", "google"} {
+		for _, other := range []string{"anthropic", "openai", "kimi", "deepseek", "google"} {
 			if other == provName {
 				continue
 			}
@@ -189,6 +192,8 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 			model = "gpt-5"
 		case "kimi":
 			model = "kimi-for-coding"
+		case "deepseek":
+			model = "deepseek-v4-pro"
 		case "google":
 			model = "gemini-2.5-pro"
 		case "ollama":
@@ -206,6 +211,8 @@ func Resolve(args Args, requireCred bool) (Resolved, error) {
 				model = "gpt-5"
 			case "kimi":
 				model = "kimi-for-coding"
+			case "deepseek":
+				model = "deepseek-v4-pro"
 			case "google":
 				model = "gemini-2.5-pro"
 			default:
@@ -446,6 +453,8 @@ func (r Resolved) NewClient() provider.Client {
 			return r.wrapWithRefresh(inner)
 		}
 		return inner
+	case "deepseek":
+		return provider.NewDeepSeek(r.Credential, r.BaseURL)
 	case "openai":
 		if r.AuthMethod == "oauth" {
 			inner := provider.NewOpenAICodex(r.Credential, r.AccountID, r.BaseURL)
@@ -601,6 +610,8 @@ func envVarName(provider string) string {
 		return "OPENAI"
 	case "kimi":
 		return "KIMI"
+	case "deepseek":
+		return "DEEPSEEK"
 	case "google":
 		return "GEMINI"
 	case "ollama":

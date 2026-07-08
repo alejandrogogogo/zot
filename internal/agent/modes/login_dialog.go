@@ -65,7 +65,7 @@ func (d *loginDialog) Open(zotHome string) {
 	d.success = false
 	d.url = ""
 	d.cursor = 0
-	d.status = map[string]string{"anthropic": "", "openai": "", "kimi": "", "google": ""}
+	d.status = map[string]string{"anthropic": "", "openai": "", "kimi": "", "deepseek": "", "google": ""}
 	// Best-effort: if the auth file can't be read, treat every
 	// provider as not-logged-in. The status line just won't show
 	// anything useful in that case, which is fine — the user
@@ -75,6 +75,7 @@ func (d *loginDialog) Open(zotHome string) {
 		d.status["anthropic"] = creds.Method("anthropic")
 		d.status["openai"] = creds.Method("openai")
 		d.status["kimi"] = creds.Method("kimi")
+		d.status["deepseek"] = creds.Method("deepseek")
 		d.status["google"] = creds.Method("google")
 	}
 }
@@ -112,7 +113,7 @@ func (d *loginDialog) Render(th tui.Theme, width int) []string {
 		}
 		lines = append(lines, frameRule(th, width))
 	case loginStepProvider:
-		opts := []string{"anthropic", "openai", "kimi", "google"}
+		opts := providersForMethod(d.method)
 		lines = append(lines, frameHeader(th, "login - "+d.method, width))
 		for _, l := range d.renderStatusLines(th) {
 			lines = append(lines, l)
@@ -196,6 +197,19 @@ func (d *loginDialog) Render(th tui.Theme, width int) []string {
 	return lines
 }
 
+// providersForMethod returns the providers offered for a given login
+// method. API-key is the universal path so it lists every provider;
+// subscription/OAuth only lists providers that actually issue tokens
+// usable against the same API the model picker drives (Google's
+// consumer Gemini Advanced login does not, and DeepSeek has no
+// subscription product at all).
+func providersForMethod(method string) []string {
+	if method == "oauth" {
+		return []string{"anthropic", "openai", "kimi"}
+	}
+	return []string{"anthropic", "openai", "kimi", "deepseek", "google"}
+}
+
 // providerLabel returns the user-facing label for a provider id.
 func providerLabel(id string) string {
 	switch id {
@@ -205,6 +219,8 @@ func providerLabel(id string) string {
 		return "OpenAI (ChatGPT Plus/Pro)"
 	case "kimi":
 		return "Kimi Code"
+	case "deepseek":
+		return "DeepSeek"
 	case "google":
 		return "Google (Gemini API key)"
 	}
@@ -225,8 +241,9 @@ func (d *loginDialog) renderStatusLines(th tui.Theme) []string {
 	anth := d.status["anthropic"]
 	op := d.status["openai"]
 	kimi := d.status["kimi"]
+	ds := d.status["deepseek"]
 	goog := d.status["google"]
-	if anth == "" && op == "" && kimi == "" && goog == "" {
+	if anth == "" && op == "" && kimi == "" && ds == "" && goog == "" {
 		return nil
 	}
 	row := func(id, method string) string {
@@ -249,6 +266,7 @@ func (d *loginDialog) renderStatusLines(th tui.Theme) []string {
 		row("anthropic", anth),
 		row("openai", op),
 		row("kimi", kimi),
+		row("deepseek", ds),
 		row("google", goog),
 		"",
 	}
@@ -315,23 +333,20 @@ func (d *loginDialog) handleProviderKey(k tui.Key) loginDialogAction {
 			d.cursor--
 		}
 	case tui.KeyDown:
-		if d.cursor < 3 {
+		providers := providersForMethod(d.method)
+		if d.cursor < len(providers)-1 {
 			d.cursor++
 		}
 	case tui.KeyEsc:
 		d.Close()
 		return loginDialogAction{Close: true}
 	case tui.KeyEnter:
-		providers := []string{"anthropic", "openai", "kimi", "google"}
+		providers := providersForMethod(d.method)
+		if d.cursor < 0 || d.cursor >= len(providers) {
+			return loginDialogAction{}
+		}
 		d.provider = providers[d.cursor]
 		d.step = loginStepWaiting
-		// Google has no subscription OAuth path (Gemini Advanced does
-		// not issue API tokens). If the user chose subscription + google,
-		// quietly downgrade to api-key so they get a usable form instead
-		// of a hard error.
-		if d.provider == "google" {
-			d.method = "apikey"
-		}
 		if d.method == "apikey" {
 			return loginDialogAction{StartAPIKey: true, Provider: d.provider}
 		}
